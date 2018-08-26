@@ -1,0 +1,24 @@
+[package]
+name = "psd_lib"
+version = "0.1.0"
+authors = ["Vyrtsev Mikhail <reeywhaar@gmail.com>"]
+
+[dependencies]
+sha2 = "0.7.1"
+difference = "2.0"
+
+[lib]
+name = "psd_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "psd_analyzer"
+path = "src/bin_analyzer.rs"
+
+[[bin]]
+name = "psd_diff"
+path = "src/bin_diff.rs"
+
+[[bin]]
+name = "psd_lines"
+path = "src/bin_lines.rs"

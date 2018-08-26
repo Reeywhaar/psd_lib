@@ -1,0 +1,17 @@
+pub const LINES: &'static [&str] = &[
+	"header",
+	"color_mode_section_length",
+	"color_mode_section",
+	"image_resources_length",
+	"image_resources/image_resource_{n}",
+	"layers_resources_length",
+	"layers_resources/layers_info_length",
+	"layers_resources/layers_info/layer_count",
+	"layers_resources/layers_info/layer_{n}",
+	"layers_resources/layers_info/channel_data/layer_{n}/channel_{n}",
+	"layers_resources/padding",
+	"layers_resources/global_mask_length",
+	"layers_resources/global_mask",
+	"layers_resources/additional_layer_information",
+	"image_data",
+];
