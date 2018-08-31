@@ -1,7 +1,9 @@
+extern crate bin_diff;
 extern crate psd_lib;
 extern crate sha2;
 
-use psd_lib::diff::LinesWithHashIterator;
+use bin_diff::lines_with_hash_iterator::LinesWithHashIterator;
+use psd_lib::psd_file::PSDFile;
 use std::env::args;
 use std::fs::File;
 use std::io::{stdout, BufWriter, Write};
@@ -41,9 +43,10 @@ fn main() {
 	let stdout = stdout.lock();
 	let mut stdout = BufWriter::with_capacity(1024 * 64, stdout);
 	let mut data = {
-		let mut o: Vec<LinesWithHashIterator<File>> = vec![];
+		let mut o: Vec<LinesWithHashIterator<PSDFile<File>>> = vec![];
 		for path in &paths {
 			let file = File::open(&path).unwrap();
+			let file = PSDFile::new(file);
 			let it = LinesWithHashIterator::new(file).unwrap();
 			o.push(it);
 		}

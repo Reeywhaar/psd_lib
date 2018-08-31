@@ -1,7 +1,5 @@
-pub mod bytes_serializer;
-pub mod common;
-pub mod consts;
+extern crate bin_diff;
+
 pub mod diff;
-pub mod diffblock;
-pub mod functions;
+pub mod psd_file;
 pub mod psd_reader;

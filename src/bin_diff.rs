@@ -1,13 +1,14 @@
 extern crate psd_lib;
 
 use psd_lib::diff::{apply_diff as i_apply_diff, create_diff as i_create_diff};
+use psd_lib::psd_file::PSDFile;
 use std::env::args;
 use std::fs::File;
 use std::process::exit;
 
 fn create_diff(old: &str, new: &str, output_path: &str) -> Result<(), &'static str> {
-	let mut old = File::open(old).or(Err("Cannot open original file"))?;
-	let mut new = File::open(new).or(Err("Cannot open edited file"))?;
+	let mut old = PSDFile::new(File::open(old).or(Err("Cannot open original file"))?);
+	let mut new = PSDFile::new(File::open(new).or(Err("Cannot open edited file"))?);
 	let mut output = File::create(output_path).or(Err("Cannot open output file"))?;
 
 	i_create_diff(&mut old, &mut new, &mut output).or(Err("Cannot create diff"))?;

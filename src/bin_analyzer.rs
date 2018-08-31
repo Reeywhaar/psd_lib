@@ -1,10 +1,12 @@
+extern crate bin_diff;
 extern crate psd_lib;
 extern crate sha2;
-use std::env;
 
-use psd_lib::psd_reader::PSDReader;
+use bin_diff::indexes::WithIndexes;
+use psd_lib::psd_file::PSDFile;
 use sha2::{Digest, Sha256};
 use std::cmp::max;
+use std::env;
 use std::fs::File;
 use std::io::{stdout, BufWriter, Read, Seek, SeekFrom, Write};
 use std::process::exit;
@@ -55,24 +57,23 @@ fn main() {
 		exit(1);
 	});
 
-	let mut file = File::open(path).unwrap_or_else(|_| {
+	let file = File::open(path).unwrap_or_else(|_| {
 		eprintln!("Error reading input psd");
 		exit(1);
 	});
 	let mut file_h = file.try_clone().unwrap();
+	let mut file = PSDFile::new(file);
 
 	let output = stdout();
 	let mut output = output.lock();
 	let mut output = BufWriter::with_capacity(1024 * 64, &mut output);
 
-	let mut reader = PSDReader::new(&mut file);
-	let order = reader.get_order().clone();
-	let indexes = reader.get_indexes().unwrap_or_else(|_| {
+	let indexes = file.get_indexes().unwrap_or_else(|_| {
 		eprintln!("Cannot get indexes");
 		exit(1);
 	});
 
-	for item in order {
+	for (item, start, size) in indexes {
 		let indent: usize = match flat {
 			true => 0,
 			false => {
@@ -91,7 +92,6 @@ fn main() {
 				s = s.split_at(index + 1).1.to_string();
 			};
 		};
-		let (start, size) = indexes.get(&item).unwrap();
 		let mut end_s = (start + size).to_string();
 		if with_size {
 			end_s = format!("{} ({})", end_s, size);
@@ -99,7 +99,7 @@ fn main() {
 		let mut out = format!("{}{} : {} {}", "  ".repeat(indent), s, start, end_s);
 		if with_hash {
 			let max_size = 1024 * 1024 * 100;
-			if size != &0 && size < &max_size {
+			if size != 0 && size < max_size {
 				let hash = {
 					&file_h.seek(SeekFrom::Start(start.clone()));
 					let mut file_p = (&file_h).take(size.clone());
@@ -107,7 +107,7 @@ fn main() {
 					hash
 				};
 				out = format!("{}   {}", hash, out);
-			} else if size > &max_size {
+			} else if size > max_size {
 				out = format!("{:-<64}   {}", "", out);
 			} else {
 				out = format!("{:.<64}   {}", "", out);

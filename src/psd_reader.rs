@@ -1,4 +1,5 @@
-use functions::*;
+use bin_diff::functions::{read_usize_be, u_to_i16_be};
+use bin_diff::indexes::Indexes;
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -8,7 +9,7 @@ static B64_SIGNATURE: [u8; 4] = [0x38, 0x42, 0x36, 0x34];
 
 pub struct PSDReader<'a, T: 'a + Read + Seek> {
 	file: &'a mut T,
-	indexes: Option<Box<HashMap<String, (u64, u64)>>>,
+	indexes: Option<Indexes>,
 	pos: u64,
 	starts: Box<HashMap<String, u64>>,
 	ends: Box<HashMap<String, u64>>,
@@ -436,10 +437,12 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		Ok(())
 	}
 
-	pub fn get_indexes(&mut self) -> Result<&Box<HashMap<String, (u64, u64)>>, String> {
+	pub fn get_indexes(&mut self) -> Result<&Indexes, String> {
 		if self.indexes.is_some() {
 			return Ok(self.indexes.as_ref().unwrap());
 		};
+
+		let pos = self.file.seek(SeekFrom::Current(0)).unwrap();
 
 		self.get_header()?;
 		self.get_color_mode()?;
@@ -447,9 +450,9 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		self.get_layers_resources()?;
 		self.get_image_data()?;
 
-		let mut map: Box<HashMap<String, (u64, u64)>> = Box::new(HashMap::new());
+		let mut indexes: Indexes = Indexes::new();
 
-		for key in self.starts.keys() {
+		for key in &self.order {
 			let s = self
 				.starts
 				.get(key)
@@ -463,19 +466,15 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			if e < s {
 				return Err(format!("end {} is shorter that start {} at {}", e, s, key));
 			};
-			map.insert(key.clone(), (s, e - s));
+			indexes.insert(key.clone(), s, e - s);
 		}
 
 		self.starts.clear();
 		self.ends.clear();
 
-		self.indexes = Some(map);
+		self.indexes = Some(indexes);
+		self.file.seek(SeekFrom::Start(pos)).unwrap();
 		return Ok(self.indexes.as_ref().unwrap());
-	}
-
-	pub fn get_order(&mut self) -> &Vec<String> {
-		self.get_indexes().unwrap();
-		return &self.order;
 	}
 }
 
@@ -490,26 +489,26 @@ mod psd_reader_tests {
 		let mut file = file.unwrap();
 		let mut reader = PSDReader::new(&mut file);
 		let r = reader.get_indexes().unwrap();
-		assert!(r.contains_key("header"));
-		assert!(r.contains_key("color_mode_section"));
-		assert!(r.contains_key("image_resources"));
-		assert!(r.contains_key("layers_resources"));
-		assert!(r.contains_key("image_data"));
+		assert!(r.has("header"));
+		assert!(r.has("color_mode_section"));
+		assert!(r.has("image_resources"));
+		assert!(r.has("layers_resources"));
+		assert!(r.has("image_data"));
 
-		assert_eq!(r.get("header").unwrap(), &(0, 26));
-		assert_eq!(r.get("color_mode_section_length").unwrap(), &(26, 4));
-		assert_eq!(r.get("color_mode_section").unwrap(), &(30, 0));
-		assert_eq!(r.get("image_resources_length").unwrap(), &(30, 4));
-		assert_eq!(r.get("image_resources").unwrap(), &(34, 61954));
-		assert_eq!(r.get("layers_resources_length").unwrap(), &(61988, 4));
-		assert_eq!(r.get("layers_resources").unwrap(), &(61992, 2072));
+		assert_eq!(r.get("header").unwrap(), (0, 26));
+		assert_eq!(r.get("color_mode_section_length").unwrap(), (26, 4));
+		assert_eq!(r.get("color_mode_section").unwrap(), (30, 0));
+		assert_eq!(r.get("image_resources_length").unwrap(), (30, 4));
+		assert_eq!(r.get("image_resources").unwrap(), (34, 61954));
+		assert_eq!(r.get("layers_resources_length").unwrap(), (61988, 4));
+		assert_eq!(r.get("layers_resources").unwrap(), (61992, 2072));
 		assert_eq!(
 			r.get("layers_resources/layers_info/channel_data").unwrap(),
-			&(62724, 1284)
+			(62724, 1284)
 		);
-		assert_eq!(r.get("image_data").unwrap(), &(64064, 1404));
+		assert_eq!(r.get("image_data").unwrap(), (64064, 1404));
 
-		assert!(r.contains_key("layers_resources/layers_info/layer_1"));
-		assert!(!r.contains_key("layers_resources/layers_info/layer_2"));
+		assert!(r.has("layers_resources/layers_info/layer_1"));
+		assert!(!r.has("layers_resources/layers_info/layer_2"));
 	}
 }
