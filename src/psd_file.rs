@@ -1,3 +1,5 @@
+//! Contains `PSDFile` struct
+
 use bin_diff::indexes::{Indexes, WithIndexes};
 use psd_reader::PSDReader;
 use std::io::{Read, Result as IOResult, Seek, SeekFrom};
@@ -20,6 +22,7 @@ const LINES: [&str; 15] = [
 	"image_data",
 ];
 
+/// PSDFile implements `WithIndexes` trait from `bin_diff` package
 pub struct PSDFile<T: Read + Seek> {
 	file: T,
 }

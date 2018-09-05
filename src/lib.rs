@@ -1,3 +1,6 @@
+//! Library for analyzing and diffing `Adobe`™ .psd files
+//!
+
 extern crate bin_diff;
 
 pub mod diff;

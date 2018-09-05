@@ -1,3 +1,13 @@
+//! psd_diff binary
+//!
+//! Creates or applies diff of psd file
+//!
+//! ```
+//! usage: $: psd_diff create|apply [...args]
+//! usage: $: psd_diff create file_a.psd file_b.psd file_a_b.psd.diff
+//! usage: $: psd_diff apply file_a.psd file_a_b.psd.diff file_b.psd
+//! ```
+
 extern crate psd_lib;
 
 use psd_lib::diff::{apply_diff as i_apply_diff, create_diff as i_create_diff};

@@ -1,3 +1,15 @@
+//! psd_analyzer binary
+//!
+//! Shows analyze information for psd file
+//!
+//! ```
+//! usage: $: psd_analyzer [--fullpath] [--flat] [--with-size] [--with-hash] file.psd > analyze.txt
+//! 	--fullpath: show full path
+//! 	--flat: don't indent blocks
+//! 	--with-size: show block size in bytes
+//! 	--with-hash: append hash to each block
+//! ```
+
 extern crate bin_diff;
 extern crate psd_lib;
 extern crate sha2;

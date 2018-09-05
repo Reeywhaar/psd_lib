@@ -1,8 +1,11 @@
+//! Contains `create_diff` and `apply_diff` functions
+
 use bin_diff::diff::{apply_diff as ba_diff, create_diff as bc_diff};
 use bin_diff::indexes::WithIndexes;
 use std::io::{BufWriter, Error, ErrorKind, Read, Result as IOResult, Write};
 use std::str;
 
+/// creates diff out of psd file
 pub fn create_diff<T: WithIndexes, U: WithIndexes, W: Write>(
 	mut original: &mut T,
 	mut edited: &mut U,
@@ -18,6 +21,7 @@ pub fn create_diff<T: WithIndexes, U: WithIndexes, W: Write>(
 	return bc_diff(&mut original, &mut edited, &mut stdo);
 }
 
+/// applies diff to psd file
 pub fn apply_diff<T: Read, U: Read, W: Write>(
 	mut file: &mut T,
 	mut diff: &mut U,

@@ -1,3 +1,12 @@
+//! psd_lines binary
+//!
+//! Shows lines information for one or multiple input files
+//!
+//! ```
+//! usage: $: psd_lines [--truncate] [...file.psd>1] > lines.txt
+//! 	--truncate: truncate block label
+//! ```
+
 extern crate bin_diff;
 extern crate psd_lib;
 extern crate sha2;

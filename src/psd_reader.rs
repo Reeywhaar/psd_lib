@@ -1,3 +1,5 @@
+//! Contains `PSDReader` struct
+
 use bin_diff::functions::{read_usize_be, u_to_i16_be};
 use bin_diff::indexes::Indexes;
 use std::collections::HashMap;
@@ -7,6 +9,7 @@ static BPS_SIGNATURE: [u8; 4] = [0x38, 0x42, 0x50, 0x53];
 static BIM_SIGNATURE: [u8; 4] = [0x38, 0x42, 0x49, 0x4D];
 static B64_SIGNATURE: [u8; 4] = [0x38, 0x42, 0x36, 0x34];
 
+/// PSDReader structure used to get `Indexes` from psd file
 pub struct PSDReader<'a, T: 'a + Read + Seek> {
 	file: &'a mut T,
 	indexes: Option<Indexes>,
@@ -437,6 +440,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		Ok(())
 	}
 
+	/// Gets `Indexes`
 	pub fn get_indexes(&mut self) -> Result<&Indexes, String> {
 		if self.indexes.is_some() {
 			return Ok(self.indexes.as_ref().unwrap());
