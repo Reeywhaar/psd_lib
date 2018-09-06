@@ -9,9 +9,15 @@ Package includes a library and three binaries:
 
   ```
   $: psd_diff create|apply|combine [...args]
+
   $: psd_diff create file_a.psd file_b.psd file_a_b.psd.diff
+      output file can be substituted with "-", what means output to stdout
+
   $: psd_diff apply file_a.psd [...file_a_b.psd.diff>1] file_b.psd
-  $: psd_diff combine [...psd.diff>2] output.psd.diff
+      output file can be substituted with "-", what means output to stdout
+
+  $: psd_diff combine [...a.psd.diff>2] output.psd.diff
+      output file can be substituted with "-", what means output to stdout
   ```
 
 * psd_analyzer
@@ -45,7 +51,7 @@ cargo build --release
 ./target/release/psd_diff create ./test_data/a_a.psd ./test_data/a_b.psd ./test_data/a_a_a_b.psd.diff
 ```
 
-Library documentation available with `cargo doc --no-deps open` command.
+Library documentation available with `cargo doc --no-deps --open` command.
 
 ## Diff Format
 Diff format specification available [here](./psd_diff_spec.md)
