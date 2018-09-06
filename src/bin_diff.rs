@@ -89,7 +89,7 @@ fn process() -> Result<(), String> {
 			let diffs = (&args[2..(args.len() - 1)]).clone();
 			let output = args[args.len() - 1].clone();
 
-			eprintln!("{:?} {:?} {:?}", file, diffs, output);
+			eprintln!("{:?} {:?} {:?}c", file, diffs, output);
 
 			return apply_diff_vec(
 				&file,

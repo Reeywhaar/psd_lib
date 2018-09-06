@@ -4,7 +4,8 @@
 ```
 header : 26
   signature: 4 // "8BPS" in ASCII
-  version: 2
+  version: 2 // [0x00, 0x01] - psd
+             // [0x00, 0x02] - psb
   reserved: 6 // must be zero
   number_of_channels: 2
   image_height: 4
@@ -23,23 +24,23 @@ image_resources : *image_resources_length
       name : name_length == 0 ? 1 : pad(*name_length, 2) - 1
       data_length : 4
       data : *data_length
-layers_resources_length : 4
+layers_resources_length : (4 | 8) psd | psb accordingly
 layers_resources : *layers_resources_length
-  layers_info_length : 4
+  layers_info_length : (4 | 8) psd | psb accordingly
   layers_info : *layers_info_length
     layer_count : 2
-    # for i = 0; i < &layer_count; i++
+    # for i = 0; i < *layer_count; i++
       layer_{n} : {...}
         rect : 16
           top: 4
           left: 4
           bottom: 4
           right: 4
-        channel_info : 6 * */layers_resources/layers_info/layer_{n}/channel_info/number
+        channel_info : 2 + (((4 | 8) psd | psb accordingly) * */layers_resources/layers_info/layer_{n}/channel_info/number)
           number : 2
-          channel_{n} : 6
+          channel_{n} : (6 | 10) psd | psb accordingly
             id : 2
-            length : 4
+            length : (4 | 8) psd | psb accordingly
         blend_mode_signature : 4
         blend_mode_key : 4
         opacity : 1
@@ -58,10 +59,10 @@ layers_resources : *layers_resources_length
             blending_range_{n} : 4 // n channel destination range
           name_length : 1
           name : pad(*name_length, 4) - 1
-          additional_data : {...pos(extra_data) + *extra_data_length}
+          additional_data : {pos()...pos(extra_data) + *extra_data_length}
     channel_data : {...}
       # for i = 0; i < count(/layers/resources/layers_info/layer_{n}); i++
-        layer_{n} : {n}
+        layer_{n} : {...}
           # for i = 0; i < */layers/resources/layers_info/layer_{n}/channel_info/number; i++
           channel_{n} : {...}
             compression_method : 2

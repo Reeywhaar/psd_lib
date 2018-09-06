@@ -9,6 +9,20 @@ static BPS_SIGNATURE: [u8; 4] = [0x38, 0x42, 0x50, 0x53];
 static BIM_SIGNATURE: [u8; 4] = [0x38, 0x42, 0x49, 0x4D];
 static B64_SIGNATURE: [u8; 4] = [0x38, 0x42, 0x36, 0x34];
 
+enum PSDType {
+	PSD,
+	PSB,
+}
+
+impl PSDType {
+	fn length(&self) -> u8 {
+		match self {
+			PSDType::PSD => 4,
+			PSDType::PSB => 8,
+		}
+	}
+}
+
 /// PSDReader structure used to get `Indexes` from psd file
 pub struct PSDReader<'a, T: 'a + Read + Seek> {
 	file: &'a mut T,
@@ -17,6 +31,7 @@ pub struct PSDReader<'a, T: 'a + Read + Seek> {
 	starts: Box<HashMap<String, u64>>,
 	ends: Box<HashMap<String, u64>>,
 	order: Vec<String>,
+	file_type: PSDType,
 }
 
 impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
@@ -28,6 +43,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			starts: Box::new(HashMap::new()),
 			ends: Box::new(HashMap::new()),
 			order: vec![],
+			file_type: PSDType::PSD,
 		};
 	}
 
@@ -51,32 +67,26 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 	fn advance_and_read(&mut self, label: &str, size: u64) -> Result<u64, String> {
 		self.start(label);
 
-		let res = self.file.seek(SeekFrom::Start(self.pos));
-		if res.is_err() {
-			return Err(res.unwrap_err().to_string());
-		};
-		let res = read_usize_be(&mut self.file, size as usize);
-		if res.is_err() {
-			return Err(res.unwrap_err().to_string());
-		};
+		self.file
+			.seek(SeekFrom::Start(self.pos))
+			.map_err(|err| err.to_string())?;
+		let res = read_usize_be(&mut self.file, size as usize).map_err(|err| err.to_string())?;
 		self.pos += size;
 		self.end(label);
 
-		return Ok(res.unwrap() as u64);
+		return Ok(res as u64);
 	}
 
 	fn advance_and_read_vec(&mut self, label: &str, size: u64) -> Result<Vec<u8>, String> {
 		self.start(label);
 
-		let res = self.file.seek(SeekFrom::Start(self.pos));
-		if res.is_err() {
-			return Err(res.unwrap_err().to_string());
-		};
+		self.file
+			.seek(SeekFrom::Start(self.pos))
+			.map_err(|err| err.to_string())?;
 		let mut buf = vec![0; size as usize];
-		let res = self.file.read_exact(&mut buf);
-		if res.is_err() {
-			return Err(res.unwrap_err().to_string());
-		};
+		self.file
+			.read_exact(&mut buf)
+			.map_err(|err| err.to_string())?;
 		self.pos += size as u64;
 		self.end(label);
 
@@ -116,7 +126,14 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		self.start("header");
 
 		self.advance_and_check("header/signature", &BPS_SIGNATURE)?;
-		self.advance("header/version", 2);
+
+		let file_type = self.advance_and_read_vec("header/version", 2)?;
+		match file_type.as_slice() {
+			[0x00, 0x01] => self.file_type = PSDType::PSD,
+			[0x00, 0x02] => self.file_type = PSDType::PSB,
+			_ => return Err("Unknown File format".to_string()),
+		}
+
 		self.advance("header/reserved", 6);
 		self.advance("header/number_of_channels", 2);
 		self.advance("header/height", 4);
@@ -216,6 +233,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 	}
 
 	fn get_layer(&mut self, prefix: &String) -> Result<(), String> {
+		let len = self.file_type.length() as u64;
 		self.start(&prefix);
 
 		self.start(&format!("{}/rect", prefix));
@@ -234,7 +252,10 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			for i in 0..number_of_channels {
 				self.start(&format!("{}/channel_info/channel_{}", prefix, i));
 				self.advance(&format!("{}/channel_info/channel_{}/id", prefix, i), 2);
-				self.advance(&format!("{}/channel_info/channel_{}:length", prefix, i), 4);
+				self.advance(
+					&format!("{}/channel_info/channel_{}:length", prefix, i),
+					len,
+				);
 				self.end(&format!("{}/channel_info/channel_{}", prefix, i));
 			}
 		}
@@ -331,12 +352,14 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 	}
 
 	fn get_layers_resources(&mut self) -> Result<(), String> {
-		let layers_length = self.advance_and_read("layers_resources_length", 4)?;
+		let len = self.file_type.length() as u64;
+		let layers_length = self.advance_and_read("layers_resources_length", len)?;
 		let layers_end = self.pos + layers_length;
 
 		self.start("layers_resources");
 		{
-			let layers_info_len = self.advance_and_read("layers_resources/layers_info_length", 4)?;
+			let layers_info_len =
+				self.advance_and_read("layers_resources/layers_info_length", len)?;
 			let layers_info_end = self.pos + layers_info_len;
 
 			self.start("layers_resources/layers_info");
