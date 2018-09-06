@@ -1,8 +1,8 @@
 ```
-header : {}
+header : 10
   signature : 8 // "PSDDIFF1"
   version : 2 // BE u16 == 1
-blocks:
+blocks: {...}
   block_{n} : {...}
     action: 2 // BE u16
               // 0 - skip

@@ -3,7 +3,7 @@
 //! Shows analyze information for psd file
 //!
 //! ```
-//! usage: $: psd_analyzer [--fullpath] [--flat] [--with-size] [--with-hash] file.psd > analyze.txt
+//! usage: $: psd_analyzer [--fullpath] [--flat] [--with-size] [--with-hash] file.psd [> analysis.txt]
 //! 	--fullpath: show full path
 //! 	--flat: don't indent blocks
 //! 	--with-size: show block size in bytes

@@ -1,6 +1,5 @@
-# psd_spec
-## Abode Photoshop PSD format interpretation based on Official Adobe PSD Specification:
-https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/
+# Abode Photoshop® PSD format interpretation based on Official Adobe PSD Specification:
+[Official Abobe Photoshop® PSD specification](https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/)
 
 ```
 header : 26
@@ -16,7 +15,7 @@ color_mode_section_length : 4
 color_mode_section : *color_mode_section_length
 image_resources_length : 4
 image_resources : *image_resources_length
-  # while pos() < pos() + *image_resources_length
+  # while pos() < pos(image_resources) + *image_resources_length
     image_resource_{n} : {...}
       signature : 4
       id : 2

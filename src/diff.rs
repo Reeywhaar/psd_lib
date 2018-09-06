@@ -1,11 +1,16 @@
 //! Contains `create_diff` and `apply_diff` functions
 
-use bin_diff::diff::{apply_diff as ba_diff, create_diff as bc_diff};
+use bin_diff::diff::{
+	apply_diff as ba_diff, apply_diffblock, combine_diffs as bcombine_diffs,
+	combine_diffs_vec as bcombine_diffs_vec,
+	combine_diffs_vec_to_diffblocks as bcombine_diffs_vec_to_diffblocks, create_diff as bc_diff,
+};
 use bin_diff::indexes::WithIndexes;
-use std::io::{BufWriter, Error, ErrorKind, Read, Result as IOResult, Write};
-use std::str;
+use std::io::{BufWriter, Error, ErrorKind, Read, Result as IOResult, Seek, Write};
 
-/// creates diff out of psd file
+const PSDDIFF_HEADER: [u8; 10] = [0x50, 0x53, 0x44, 0x44, 0x49, 0x46, 0x46, 0x31, 0x00, 0x01];
+
+/// creates diff out of two psd files
 pub fn create_diff<T: WithIndexes, U: WithIndexes, W: Write>(
 	mut original: &mut T,
 	mut edited: &mut U,
@@ -13,12 +18,123 @@ pub fn create_diff<T: WithIndexes, U: WithIndexes, W: Write>(
 ) -> IOResult<()> {
 	let mut stdo = BufWriter::with_capacity(1024 * 64, output);
 
-	stdo.write("PSDDIFF1".as_bytes())
-		.or(Err(Error::new(ErrorKind::Other, "Cannot write signature")))?;
-	stdo.write(&[0x00, 0x01])
-		.or(Err(Error::new(ErrorKind::Other, "Cannot write version")))?;
+	stdo.write(&PSDDIFF_HEADER)
+		.or(Err(Error::new(ErrorKind::Other, "Cannot write header")))?;
 
 	return bc_diff(&mut original, &mut edited, &mut stdo);
+}
+
+/// Combines two diffs
+pub fn combine_diffs<T: Read + Seek, U: Read + Seek, W: Write>(
+	mut a: T,
+	mut b: U,
+	mut output: W,
+) -> IOResult<()> {
+	let mut buf = vec![0; 10];
+	{
+		(&mut a).take(10).by_ref().read(&mut buf)?;
+		if &buf[0..10] != &PSDDIFF_HEADER {
+			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
+		};
+	}
+	{
+		(&mut b).take(10).by_ref().read(&mut buf)?;
+		if &buf[0..10] != &PSDDIFF_HEADER {
+			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
+		};
+	}
+
+	output
+		.write(&PSDDIFF_HEADER)
+		.or(Err(Error::new(ErrorKind::Other, "Cannot write header")))?;
+
+	return bcombine_diffs(&mut a, &mut b, &mut output);
+}
+
+/// Combines multiple diffs
+pub fn combine_diffs_vec<T: Read + Seek, W: Write>(
+	diffs: &mut Vec<T>,
+	mut output: W,
+) -> IOResult<()> {
+	let mut buf = vec![0; 10];
+
+	for item in diffs.iter_mut() {
+		item.take(10).by_ref().read(&mut buf)?;
+		if &buf[0..10] != &PSDDIFF_HEADER {
+			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
+		};
+	}
+
+	output
+		.write(&PSDDIFF_HEADER)
+		.or(Err(Error::new(ErrorKind::Other, "Cannot write header")))?;
+
+	return bcombine_diffs_vec(diffs, &mut output);
+}
+
+#[cfg(test)]
+mod combine_diff_tests {
+	use super::{apply_diff, combine_diffs_vec, create_diff};
+	use bin_diff::functions::compute_hash;
+	use psd_file::PSDFile;
+	use std::fs::File;
+	use std::io::{Cursor, Seek, SeekFrom};
+
+	#[test]
+	fn works_live_test() {
+		#[cfg_attr(rustfmt, rustfmt_skip)]
+		let inputs = [
+			["b_a.psd", "b_b.psd", "b_c.psd"],
+		];
+
+		for files in inputs.iter() {
+			let mut files: Vec<_> = files
+				.iter()
+				.map(|x| {
+					let path = format!("./test_data/{}", x);
+					let file = File::open(path).unwrap();
+					PSDFile::new(file)
+				})
+				.collect();
+
+			let hash = {
+				let index = files.len() - 1;
+				compute_hash(&mut files[index])
+			};
+
+			let mut diffs = vec![];
+			for i in 0..(files.len() - 1) {
+				let mut output = Cursor::new(vec![]);
+				let (mut chunka, mut chunkb) = files.split_at_mut(i + 1);
+				let fa = &mut chunka[chunka.len() - 1];
+				let fb = &mut chunkb[0];
+				fa.seek(SeekFrom::Start(0)).unwrap();
+				fb.seek(SeekFrom::Start(0)).unwrap();
+				create_diff(fa, fb, &mut output).unwrap();
+				output.seek(SeekFrom::Start(0)).unwrap();
+				diffs.push(output);
+			}
+
+			let mut combineddiff = {
+				let mut diff = Cursor::new(vec![]);
+				combine_diffs_vec(&mut diffs, &mut diff).unwrap();
+				diff.seek(SeekFrom::Start(0)).unwrap();
+				diff
+			};
+
+			let restoredhash = {
+				let mut original = &mut files[0];
+				original.seek(SeekFrom::Start(0)).unwrap();
+				let mut output = Cursor::new(vec![]);
+				apply_diff(&mut original, &mut combineddiff, &mut output).unwrap();
+				output.seek(SeekFrom::Start(0)).unwrap();
+				let hash = compute_hash(&mut output);
+				hash
+			};
+
+			assert_eq!(hash, restoredhash);
+		}
+	}
 }
 
 /// applies diff to psd file
@@ -27,28 +143,22 @@ pub fn apply_diff<T: Read, U: Read, W: Write>(
 	mut diff: &mut U,
 	mut output: &mut W,
 ) -> IOResult<()> {
-	let mut buf = vec![0; 1024 * 64];
+	let mut buf = vec![0; 10];
 	{
-		(&mut diff).take(8).by_ref().read(&mut buf)?;
-		if str::from_utf8(&buf[0..8]).unwrap() != "PSDDIFF1" {
-			return Err(Error::new(ErrorKind::Other, "Signature mismatch"));
+		(&mut diff).take(10).by_ref().read(&mut buf)?;
+		if &buf[0..10] != &PSDDIFF_HEADER {
+			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
 		};
 	}
-	{
-		(&mut diff).take(2).by_ref().read(&mut buf)?;
-		if &buf[0..2] != [0x00, 0x01] {
-			return Err(Error::new(ErrorKind::Other, "Version mismatch"));
-		};
-	};
 
 	return ba_diff(&mut file, &mut diff, &mut output);
 }
 
 #[cfg(test)]
 mod apply_diff_tests {
-	use super::super::psd_file::PSDFile;
 	use super::{apply_diff, create_diff};
 	use bin_diff::functions::compute_hash;
+	use psd_file::PSDFile;
 	use std::fs::File;
 	use std::io::{Cursor, Seek, SeekFrom};
 
@@ -189,7 +299,7 @@ mod apply_diff_tests {
 	}
 
 	#[test]
-	fn signature_fail_test() {
+	fn header_fail_test() {
 		#[cfg_attr(rustfmt, rustfmt_skip)]
 		let mut file = Cursor::new(vec![
 			0xd0, 0x4b, 0x51, 0x00, 0x25, 0xb6, 0x95, 0xf3,
@@ -208,33 +318,7 @@ mod apply_diff_tests {
 
 		let mut output = Cursor::new(vec![0, 136]);
 		let res = apply_diff(&mut file, &mut diff, &mut output);
-		assert_eq!(
-			res.unwrap_err().to_string(),
-			"Signature mismatch".to_string()
-		)
-	}
-
-	#[test]
-	fn version_fail_test() {
-		#[cfg_attr(rustfmt, rustfmt_skip)]
-		let mut file = Cursor::new(vec![
-			0xd0, 0x4b, 0x51, 0x00, 0x25, 0xb6, 0x95, 0xf3,
-			0xb0, 0xa9, 0x59, 0xdc, 0x30, 0x35, 0x16, 0x7d,
-			0x06, 0xa1, 0xf7, 0x66, 0x64, 0x33, 0x05, 0xee,
-			0x2b, 0x35, 0xa9, 0x38, 0x80, 0x7f, 0x1c, 0x90,
-		]);
-
-		#[cfg_attr(rustfmt, rustfmt_skip)]
-		let mut diff = Cursor::new(vec![
-			0x50, 0x53, 0x44, 0x44, 0x49, 0x46, 0x46, 0x31, // PSDDIFF2
-			0x00, 0x02, // version
-			0x00, 0x00, 0x00, 0x00, 0x00, 0x10, // skip 16
-			0x00, 0x01, 0x00, 0x00, 0x00, 0x20, // add 32
-		]);
-
-		let mut output = Cursor::new(vec![0, 136]);
-		let res = apply_diff(&mut file, &mut diff, &mut output);
-		assert_eq!(res.unwrap_err().to_string(), "Version mismatch".to_string())
+		assert_eq!(res.unwrap_err().to_string(), "Header mismatch".to_string())
 	}
 
 	#[test]
@@ -257,7 +341,6 @@ mod apply_diff_tests {
 
 		let mut output = Cursor::new(vec![0, 136]);
 		let res = apply_diff(&mut file, &mut diff, &mut output);
-		eprintln!("{:?}", res);
 		assert_eq!(
 			res.unwrap_err().to_string(),
 			"Unknown Action: possibly corrupted file or diff".to_string()
@@ -299,6 +382,86 @@ mod apply_diff_tests {
 
 				assert_eq!(hash, res_hash, "pair {:?} failed", pair);
 			}
+		}
+	}
+}
+
+/// applies mutiple diffs to psd file
+pub fn apply_diffs_vec<T: Read, U: Read + Seek, W: Write>(
+	mut file: &mut T,
+	mut diffs: &mut Vec<U>,
+	mut output: &mut W,
+) -> IOResult<()> {
+	let mut buf = vec![0; 10];
+
+	for item in diffs.iter_mut() {
+		item.take(10).by_ref().read(&mut buf)?;
+		if &buf[0..10] != &PSDDIFF_HEADER {
+			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
+		};
+	}
+
+	let mut diffblocks = bcombine_diffs_vec_to_diffblocks(&mut diffs)?;
+	for block in diffblocks.iter_mut() {
+		apply_diffblock(&mut file, block, &mut output)?;
+	}
+	return Ok(());
+}
+
+#[cfg(test)]
+mod apply_diffs_vec_tests {
+	use super::{apply_diffs_vec, create_diff};
+	use bin_diff::functions::compute_hash;
+	use psd_file::PSDFile;
+	use std::fs::File;
+	use std::io::{Cursor, Seek, SeekFrom};
+
+	#[test]
+	fn works_live_test() {
+		#[cfg_attr(rustfmt, rustfmt_skip)]
+		let inputs = [
+			["b_a.psd", "b_b.psd", "b_c.psd"],
+		];
+
+		for files in inputs.iter() {
+			let mut files: Vec<_> = files
+				.iter()
+				.map(|x| {
+					let path = format!("./test_data/{}", x);
+					let file = File::open(path).unwrap();
+					PSDFile::new(file)
+				})
+				.collect();
+
+			let hash = {
+				let index = files.len() - 1;
+				compute_hash(&mut files[index])
+			};
+
+			let mut diffs = vec![];
+			for i in 0..(files.len() - 1) {
+				let mut output = Cursor::new(vec![]);
+				let (mut chunka, mut chunkb) = files.split_at_mut(i + 1);
+				let fa = &mut chunka[chunka.len() - 1];
+				let fb = &mut chunkb[0];
+				fa.seek(SeekFrom::Start(0)).unwrap();
+				fb.seek(SeekFrom::Start(0)).unwrap();
+				create_diff(fa, fb, &mut output).unwrap();
+				output.seek(SeekFrom::Start(0)).unwrap();
+				diffs.push(output);
+			}
+
+			let restoredhash = {
+				let mut original = &mut files[0];
+				original.seek(SeekFrom::Start(0)).unwrap();
+				let mut output = Cursor::new(vec![]);
+				apply_diffs_vec(&mut original, &mut diffs, &mut output).unwrap();
+				output.seek(SeekFrom::Start(0)).unwrap();
+				let hash = compute_hash(&mut output);
+				hash
+			};
+
+			assert_eq!(hash, restoredhash);
 		}
 	}
 }
