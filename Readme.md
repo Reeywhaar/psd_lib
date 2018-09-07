@@ -20,6 +20,8 @@ Package includes a library and three binaries:
       output file can be substituted with "-", what means output to stdout
   ```
 
+  Also setting environment `PSDDIFF_VERBOSE` to `true` will force command to print elapsed time
+
 * psd_analyzer
 
   tool which shows binary blocks representation of the file in text format. Usage:
