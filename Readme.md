@@ -8,7 +8,10 @@ Package includes a library and three binaries:
   tool for creating, applying and combining psd diff files. Based on [bin_diff](https://github.com/Reeywhaar/bin_diff) library. Usage:
 
   ```
-  $: psd_diff create|apply|combine [...args]
+  $: psd_diff measure|create|apply|combine [...args]
+
+  $: psd_diff measure [--in-bytes] file_a.psd file_b.psd
+      output size in bytes instead of human readable version
 
   $: psd_diff create file_a.psd file_b.psd file_a_b.psd.diff
       output file can be substituted with "-", what means output to stdout

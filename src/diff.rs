@@ -4,11 +4,20 @@ use bin_diff::diff::{
 	apply_diff as ba_diff, apply_diffblock, combine_diffs as bcombine_diffs,
 	combine_diffs_vec as bcombine_diffs_vec,
 	combine_diffs_vec_to_diffblocks as bcombine_diffs_vec_to_diffblocks, create_diff as bc_diff,
+	measure_diff_size as bc_measure,
 };
 use bin_diff::indexes::WithIndexes;
 use std::io::{BufWriter, Error, ErrorKind, Read, Result as IOResult, Seek, Write};
 
 const PSDDIFF_HEADER: [u8; 10] = [0x50, 0x53, 0x44, 0x44, 0x49, 0x46, 0x46, 0x31, 0x00, 0x01];
+
+/// Measures size of presumed diff
+pub fn measure_diff_size<T: WithIndexes, U: WithIndexes>(
+	mut original: &mut T,
+	mut edited: &mut U,
+) -> IOResult<u64> {
+	return bc_measure(&mut original, &mut edited).map(|x| x + (PSDDIFF_HEADER.len() as u64));
+}
 
 /// creates diff out of two psd files
 pub fn create_diff<T: WithIndexes, U: WithIndexes, W: Write>(

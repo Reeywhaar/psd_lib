@@ -4,7 +4,10 @@
 //!
 //! ```
 //! usage:
-//! $: psd_diff create|apply|combine [...args]
+//! $: psd_diff measure|create|apply|combine [...args]
+//!
+//! $: psd_diff measure [--in-bytes] file_a.psd file_b.psd
+//!     --in-bytes: output size in bytes instead of human readable format
 //!
 //! $: psd_diff create file_a.psd file_b.psd file_a_b.psd.diff
 //!     output file can be substituted with "-", what means output to stdout
@@ -18,13 +21,14 @@
 //! Also setting environment PSDDIFF_VERBOSE=true will make command print elapsed time
 //! ```
 
+extern crate bin_diff;
 extern crate psd_lib;
 mod proxy_file;
 
 use proxy_file::ProxyFile;
 use psd_lib::diff::{
 	apply_diff as apply, apply_diffs_vec as applyd, combine_diffs_vec as combine,
-	create_diff as create,
+	create_diff as create, measure_diff_size as measure,
 };
 use psd_lib::psd_file::PSDFile;
 use std::env::{args, var};
@@ -64,6 +68,35 @@ fn printdots() -> Box<Fn() -> ()> {
 	};
 
 	return Box::new(out);
+}
+
+const GIGABYTE: f64 = 1_063_256_064.0;
+const MEGABYTE: f64 = 1_048_576.0;
+const KILOBYTE: f64 = 1_024.0;
+
+fn measure_diff(old: &str, new: &str, human_readable: bool) -> Result<(), String> {
+	let mut old = PSDFile::new(File::open(old).or(Err("Cannot open original file".to_string()))?);
+	let mut new = PSDFile::new(File::open(new).or(Err("Cannot open edited file".to_string()))?);
+
+	let printdots = match var("PSDDIFF_VERBOSE") {
+		Ok(ref x) if x == "true" => Some(printdots()),
+		_ => None,
+	};
+	let size = measure(&mut old, &mut new).or(Err("Error while measuring diff".to_string()))?;
+	if let Some(stopdots) = printdots {
+		stopdots();
+	};
+	if human_readable {
+		let gb = (size as f64 / GIGABYTE).floor();
+		let mb = ((size as f64 - (gb * GIGABYTE)) / MEGABYTE).floor();
+		let kb = ((size as f64 - (gb * GIGABYTE) - (mb * MEGABYTE)) / KILOBYTE).floor();
+		let b = size as f64 - (gb * GIGABYTE) - (mb * MEGABYTE) - (kb * KILOBYTE);
+		println!("{}GB {}MB {}KB {}B", gb, mb, kb, b);
+	} else {
+		println!("{}", size);
+	}
+
+	Ok(())
 }
 
 fn create_diff(old: &str, new: &str, output_path: &str) -> Result<(), String> {
@@ -170,6 +203,38 @@ fn process() -> Result<(), String> {
 	}
 	let action = args[0].clone();
 	match action.as_ref() {
+		"measure" => {
+			let usage_str =
+				"usage: bin_diff measure [--in-bytes] $original_path $edited_path".to_string();
+			if args.len() < 3 {
+				return Err(usage_str);
+			};
+			let mut human_readable = true;
+			let mut original = None;
+			let mut edited = None;
+			for arg in args.iter().skip(1) {
+				match arg.as_ref() {
+					"--in-bytes" => {
+						human_readable = false;
+					}
+					val => {
+						if original.is_none() {
+							original = Some(val.to_string());
+							continue;
+						};
+						if edited.is_none() {
+							edited = Some(val.to_string());
+							continue;
+						};
+					}
+				}
+			}
+
+			if original.is_none() || edited.is_none() {
+				return Err(usage_str);
+			}
+			return measure_diff(&original.unwrap(), &edited.unwrap(), human_readable);
+		}
 		"create" => {
 			if args.len() < 4 {
 				return Err(
