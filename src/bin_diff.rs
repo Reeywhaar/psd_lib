@@ -17,57 +17,29 @@
 //! ```
 
 extern crate psd_lib;
+mod proxy_file;
 
+use proxy_file::ProxyFile;
 use psd_lib::diff::{
 	apply_diff as apply, apply_diffs_vec as applyd, combine_diffs_vec as combine,
 	create_diff as create,
 };
 use psd_lib::psd_file::PSDFile;
 use std::env::args;
-use std::fs::{remove_file, rename, File};
-use std::io::{stdout, Write};
+use std::fs::File;
 use std::process::exit;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-fn timestamp() -> String {
-	let now = SystemTime::now();
-	let elapsed = now
-		.duration_since(UNIX_EPOCH)
-		.expect("Error getting timestamp");
-	return elapsed.as_secs().to_string();
-}
-
-fn create_tempname(path: &str) -> String {
-	return format!("{}.tmp.{}", path, timestamp());
-}
 
 fn create_diff(old: &str, new: &str, output_path: &str) -> Result<(), String> {
 	let mut old = PSDFile::new(File::open(old).or(Err("Cannot open original file".to_string()))?);
 	let mut new = PSDFile::new(File::open(new).or(Err("Cannot open edited file".to_string()))?);
 
-	let tempname = if output_path != "-" {
-		create_tempname(output_path)
-	} else {
-		"-".to_string()
-	};
+	let mut output = ProxyFile::from(output_path.to_string());
 
-	let mut output: Box<dyn Write> = if output_path == "-" {
-		Box::new(stdout())
-	} else {
-		Box::new(File::create(&tempname).or(Err("Cannot open output file".to_string()))?)
-	};
+	let res = create(&mut old, &mut new, &mut output);
 
-	let res = create(&mut old, &mut new, &mut output).or(Err("Cannot create diff".to_string()));
-
-	if res.is_err() {
-		if output_path != "-" {
-			remove_file(&tempname).map_err(|err| err.to_string())?;
-		}
-		return res;
-	} else {
-		if output_path != "-" {
-			rename(&tempname, output_path).map_err(|err| err.to_string())?;
-		}
+	if let Err(e) = res {
+		output.set_err(e);
+		return Err("Cannot create diff".to_string());
 	}
 
 	Ok(())
@@ -77,29 +49,13 @@ fn apply_diff(old_path: &str, diff_path: &str, output_path: &str) -> Result<(), 
 	let mut file = File::open(old_path).or(Err("Cannot open original file".to_string()))?;
 	let mut diff = File::open(diff_path).or(Err("Cannot open diff file".to_string()))?;
 
-	let tempname = if output_path != "-" {
-		create_tempname(output_path)
-	} else {
-		"-".to_string()
-	};
+	let mut output = ProxyFile::from(output_path.to_string());
 
-	let mut output: Box<dyn Write> = if output_path == "-" {
-		Box::new(stdout())
-	} else {
-		Box::new(File::create(&tempname).or(Err("Cannot open output file".to_string()))?)
-	};
+	let res = apply(&mut file, &mut diff, &mut output);
 
-	let res = apply(&mut file, &mut diff, &mut output).or(Err("Error applying diff".to_string()));
-
-	if res.is_err() {
-		if output_path != "-" {
-			remove_file(&tempname).map_err(|err| err.to_string())?;
-		}
-		return res;
-	} else {
-		if output_path != "-" {
-			rename(&tempname, output_path).map_err(|err| err.to_string())?;
-		}
+	if let Err(e) = res {
+		output.set_err(e);
+		return Err("Error applying diff".to_string());
 	}
 
 	Ok(())
@@ -113,29 +69,13 @@ fn apply_diff_vec(old_path: &str, diff_paths: &[&str], output_path: &str) -> Res
 		diffs.push(diff);
 	}
 
-	let tempname = if output_path != "-" {
-		create_tempname(output_path)
-	} else {
-		"-".to_string()
-	};
+	let mut output = ProxyFile::from(output_path.to_string());
 
-	let mut output: Box<dyn Write> = if output_path == "-" {
-		Box::new(stdout())
-	} else {
-		Box::new(File::create(&tempname).or(Err("Cannot open output file".to_string()))?)
-	};
+	let res = applyd(&mut file, &mut diffs, &mut output);
 
-	let res = applyd(&mut file, &mut diffs, &mut output).or(Err("Error applying diff".to_string()));
-
-	if res.is_err() {
-		if output_path != "-" {
-			remove_file(&tempname).map_err(|err| err.to_string())?;
-		}
-		return res;
-	} else {
-		if output_path != "-" {
-			rename(&tempname, output_path).map_err(|err| err.to_string())?;
-		}
+	if let Err(e) = res {
+		output.set_err(e);
+		return Err("Error applying diff".to_string());
 	}
 
 	Ok(())
@@ -148,29 +88,14 @@ fn combine_diffs(paths: &[&str], output_path: &str) -> Result<(), String> {
 		files.push(file);
 	}
 
-	let tempname = if output_path != "-" {
-		create_tempname(output_path)
-	} else {
-		"-".to_string()
-	};
+	let mut output = ProxyFile::from(output_path.to_string());
 
-	let mut output: Box<dyn Write> = if output_path == "-" {
-		Box::new(stdout())
-	} else {
-		Box::new(File::create(&tempname).or(Err("Cannot open output file".to_string()))?)
-	};
+	let res = combine(&mut files, &mut output);
 
-	let res = combine(&mut files, &mut output).map_err(|err| format!("{}", err));
-
-	if res.is_err() {
-		if output_path != "-" {
-			remove_file(&tempname).map_err(|err| err.to_string())?;
-		}
-		return res;
-	} else {
-		if output_path != "-" {
-			rename(&tempname, output_path).map_err(|err| err.to_string())?;
-		}
+	if let Err(e) = res {
+		let outerr = format!("{}", e);
+		output.set_err(e);
+		return Err(outerr);
 	}
 
 	Ok(())
