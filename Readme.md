@@ -1,9 +1,9 @@
 # PSD_LIB
 Library written in Rust for working with Adobe Photoshop® `.psd` files.
 
-Package includes a library and three binaries:
+Package includes a library and four binaries:
 
-* ### psd_decompose binary
+* ### psd_decompose
 
   `psd_decompose` allows to decompose psd file into chunks of objects which it store in the `decomposed_objects` directory and `{$file}.psd.decomposed` text file next to original file.
 
@@ -13,17 +13,17 @@ Package includes a library and three binaries:
 
   ```bash
   $: psd_decompose [...file.psd > 1]
-  
+
   $: psd_decompose --restore [--prefix=string] [--postfix=string] [...file.psd.decomposed > 1]
      --prefix:  prepend string to restored filename
      --postfix: append string to restored filename before extension
-     
+
   $: psd_decompose --sha [...file > 1]
      compute sha256 hash of given prospective restored files or ordinary files. Usefull to check that restore will be correct.
-     
+
   $: psd_decompose --remove [...file.decomposed > 1]
      removes decomposed index file and rebuilds (actually gather all the hashes from other files in the directory and removes hashes which are orphaned) decomposed_opjects directory.
-     
+
   $: psd_decompose --cleanup
      perform cleanup of "decomposed_objects" directory, which consists of populating unique index of every hash of every .decomposed file and removing every hash which doesn't said index contains.
   ```
