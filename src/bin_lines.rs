@@ -9,7 +9,6 @@
 
 extern crate bin_diff;
 extern crate psd_lib;
-extern crate sha2;
 
 use bin_diff::lines_with_hash_iterator::LinesWithHashIterator;
 use psd_lib::psd_file::PSDFile;

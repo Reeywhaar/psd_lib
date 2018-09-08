@@ -80,8 +80,8 @@ fn main() {
 	let mut output = output.lock();
 	let mut output = BufWriter::with_capacity(1024 * 64, &mut output);
 
-	let indexes = file.get_indexes().unwrap_or_else(|_| {
-		eprintln!("Cannot get indexes");
+	let indexes = file.get_indexes().unwrap_or_else(|e| {
+		eprintln!("{}", e);
 		exit(1);
 	});
 

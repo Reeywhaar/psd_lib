@@ -199,7 +199,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 				} else {
 					self.advance(
 						&format!("image_resources/image_resource_{}/name", resource_index),
-						Self::pad(name_length, 2) - 1,
+						Self::pad(name_length + 1, 2) - 1,
 					);
 				}
 
@@ -337,7 +337,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			let mut layer_name_length =
 				self.advance_and_read(&format!("{}/name_length", prefix), 1)?;
 			if layer_name_length > 1 {
-				layer_name_length = Self::pad(layer_name_length, 4) - 1;
+				layer_name_length = Self::pad(layer_name_length + 1, 4) - 1;
 			}
 			self.advance(&format!("{}/name", prefix), layer_name_length);
 

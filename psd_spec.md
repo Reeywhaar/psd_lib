@@ -21,7 +21,7 @@ image_resources : *image_resources_length
       signature : 4
       id : 2
       name_length : 1
-      name : name_length == 0 ? 1 : pad(*name_length, 2) - 1
+      name : name_length == 0 ? 1 : pad(*name_length + 1, 2) - 1
       data_length : 4
       data : *data_length
 layers_resources_length : (4 | 8) psd | psb accordingly
@@ -58,7 +58,7 @@ layers_resources : *layers_resources_length
             blending_range_{n} : 4 // n channel source range
             blending_range_{n} : 4 // n channel destination range
           name_length : 1
-          name : pad(*name_length, 4) - 1
+          name : pad(*name_length + 1, 4) - 1
           additional_data : {pos()...pos(extra_data) + *extra_data_length}
     channel_data : {...}
       # for i = 0; i < count(/layers/resources/layers_info/layer_{n}); i++
