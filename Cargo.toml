@@ -1,6 +1,6 @@
 [package]
 name = "psd_lib"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Vyrtsev Mikhail <reeywhaar@gmail.com>"]
 
 [dependencies]

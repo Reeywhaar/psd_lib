@@ -18,6 +18,12 @@ Package includes a library and four binaries:
      --prefix:  prepend string to restored filename
      --postfix: append string to restored filename before extension
 
+  $: psd_decompose --size [--as-bytes] [...file.psd.decomposed > 1]
+     * first: if all of the paths is decomposed object files, then it calculates presumable size of decompressed files
+     * second: calculates size of prospective "decomposed_objects" directory and outputs it\'s next to accumulated size of given paths, which shows is it worth to decompose files
+
+     --as-bytes: output size in bytes instead of human readable version
+
   $: psd_decompose --sha [...file > 1]
      compute sha256 hash of given prospective restored files or ordinary files. Usefull to check that restore will be correct.
 

@@ -12,6 +12,13 @@
 //!    --prefix:  prepend string to restored filename
 //!    --postfix: append string to restored filename before extension
 //!
+//! $: psd_decompose --size [--as-bytes] [...file.psd.decomposed > 1]
+//!    Works in two modes:
+//!    * first: if all of the paths is decomposed object files, then it calculates presumable size of decompressed files
+//!    * second: calculates size of prospective "decomposed_objects" directory and outputs it's next to accumulated size of given paths, which shows is it worth to decompose files
+//!
+//!    --as-bytes: output size in bytes instead of human readable version
+//!
 //! $: psd_decompose --sha [...file > 1]
 //!    compute sha256 hash of given prospective restored files or ordinary files. Usefull to check that restore will be correct.
 //!
@@ -34,7 +41,7 @@ use once_option::OnceOption;
 use psd_lib::psd_file::PSDFile;
 use sha2::{Digest, Sha256};
 use std::env::args;
-use std::fs::{create_dir_all, read_dir, remove_file, File};
+use std::fs::{create_dir_all, metadata, read_dir, remove_file, File};
 use std::io::{copy, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::exit;
@@ -183,6 +190,141 @@ fn restore_file(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<(),
 			"Cannot flush to output file: {:?}",
 			restored_loc
 		)))?;
+	}
+
+	Ok(())
+}
+
+const GIGABYTE: f64 = 1_063_256_064.0;
+const MEGABYTE: f64 = 1_048_576.0;
+const KILOBYTE: f64 = 1_024.0;
+
+fn bytes_to_human_readable(size: u64) -> String {
+	let gb = (size as f64 / GIGABYTE).floor();
+	let mb = ((size as f64 - (gb * GIGABYTE)) / MEGABYTE).floor();
+	let kb = ((size as f64 - (gb * GIGABYTE) - (mb * MEGABYTE)) / KILOBYTE).floor();
+	let b = size as f64 - (gb * GIGABYTE) - (mb * MEGABYTE) - (kb * KILOBYTE);
+	return format!("{}GB {}MB {}KB {}B", gb, mb, kb, b);
+}
+
+fn calc_presumed_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
+	let mut total_hashes: Box<Vec<(String, u64)>> = Box::new(vec![]);
+
+	for path in paths {
+		let mut input = File::open(&path).or(Err(format!("Cannot open {:?}", path)))?;
+
+		let hashes = {
+			let obj = get_objects(&mut input)?;
+			obj.map(|x| (x.3, x.2)).fold(Box::new(vec![]), |mut c, x| {
+				if !c.contains(&x) {
+					c.push(x);
+				};
+				return c;
+			})
+		};
+
+		let size = hashes.iter().fold(0u64, |c, x| c + (x.1 as u64));
+		if as_bytes {
+			println!("{} - {}", path.to_string_lossy(), size);
+		} else {
+			println!(
+				"{} - {}",
+				path.to_string_lossy(),
+				bytes_to_human_readable(size)
+			);
+		}
+
+		hashes.into_iter().for_each(|x| {
+			if !total_hashes.contains(&x) {
+				total_hashes.push(x);
+			};
+		});
+	}
+
+	let filesize = paths
+		.iter()
+		.map(|x| {
+			let meta = metadata(x).unwrap();
+			meta.len()
+		})
+		.fold(0u64, |c, x| c + x);
+
+	let size = total_hashes.iter().fold(0u64, |c, x| c + (x.1 as u64));
+	if as_bytes {
+		println!("\ntotal size         - {}", filesize);
+		println!("decomposed_objects - {}", size);
+	} else {
+		println!(
+			"\ntotal size         - {}",
+			bytes_to_human_readable(filesize)
+		);
+		println!("decomposed_objects - {}", bytes_to_human_readable(size));
+	};
+
+	Ok(())
+}
+
+fn calc_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
+	let mut total_size: u64 = 0;
+
+	let decomposed_mode = paths.into_iter().all(|x| {
+		if x.extension().is_some() && x.extension().unwrap() == "decomposed" {
+			return true;
+		};
+		return false;
+	});
+
+	if !decomposed_mode {
+		return calc_presumed_size(paths, as_bytes);
+	};
+
+	for path in paths {
+		let file = File::open(&path).or(Err(format!("Cannot open path: {:?}", path)))?;
+		let file = BufReader::with_capacity(1024, file);
+
+		let objdir = path.parent().expect("Parent directory not found");
+		let mut objdir = PathBuf::from(objdir);
+		objdir.push("decomposed_objects");
+
+		let mut acc_size: u64 = 0;
+
+		for hash in file.lines() {
+			let hash = hash.map_err(|e| e.to_string())?;
+
+			if hash == EMPTY_HASH {
+				continue;
+			}
+
+			let mut hashdir = objdir.clone();
+			hashdir.push(&hash[0..2]);
+			let mut hashloc = hashdir.clone();
+			hashloc.push(hash);
+
+			if !hashloc.exists() {
+				return Err(format!("hash {:?} doesn't exists", hashloc));
+			}
+
+			let hash_meta = metadata(&hashloc).map_err(|e| e.to_string())?;
+			acc_size += hash_meta.len();
+		}
+
+		if as_bytes {
+			println!("{} - {}", &path.to_string_lossy(), acc_size);
+		} else {
+			println!(
+				"{} - {}",
+				&path.to_string_lossy(),
+				bytes_to_human_readable(acc_size)
+			);
+		}
+
+		total_size += acc_size;
+	}
+
+	if as_bytes {
+		println!("\ntotal size - {}", &total_size);
+	} else {
+		println!("\ntotal size - {}", bytes_to_human_readable(total_size));
 	}
 
 	Ok(())
@@ -343,23 +485,49 @@ fn remove(paths: &Vec<PathBuf>) -> Result<(), String> {
 	Ok(())
 }
 
+#[derive(PartialEq, Eq, Clone)]
 enum Action {
 	Create,
 	Restore,
+	Size,
 	CheckSum,
 	Remove,
 	Cleanup,
 }
 
 fn run() -> Result<(), String> {
+	let usage_str = "\
+$: psd_decompose [...file.psd > 1]
+
+$: psd_decompose --restore [--prefix=string] [--postfix=string] [...file.psd.decomposed > 1]
+   --prefix:  prepend string to restored filename
+   --postfix: append string to restored filename before extension
+
+$: psd_decompose --size [--as-bytes] [...file.psd.decomposed > 1]
+   * first: if all of the paths are .decomposed files, then it calculates presumable size of decompressed files
+   * second: calculates size of prospective \"decomposed_objects\" directory and outputs it's next to accumulated size of given paths, which shows is it worth to decompose files
+
+   --as-bytes: output size in bytes instead of human readable version
+
+$: psd_decompose --sha [...file > 1]
+   compute sha256 hash of given prospective restored files or ordinary files. Usefull to check that restore will be correct.
+
+$: psd_decompose --remove [...file.decomposed > 1]
+   removes decomposed index file and rebuild (actually gather all the hashes from other files in the directory and removes hashes which are orphaned) decomposed_opjects directory.
+
+$: psd_decompose --cleanup
+   perform cleanup of \"decomposed_objects\" directory which consists of populating unique index of every hash of every .decomposed file and removing every hash which doesn't said index contains.
+	";
+
 	let args = args().skip(1);
 	if args.len() == 0 {
-		eprintln!("usage: bin_decompose [--restore [--prefix=string] [--postfix=string]] [...file_path > 0]");
+		eprintln!("{}", usage_str);
 		exit(1);
 	};
 	let mut action: OnceOption<Action> = OnceOption::new();
 	let mut prefix = "".to_string();
 	let mut postfix = "".to_string();
+	let mut as_bytes = false;
 	let mut paths: Vec<PathBuf> = vec![];
 	for arg in args {
 		match arg.as_ref() {
@@ -367,6 +535,14 @@ fn run() -> Result<(), String> {
 				action
 					.set(Action::Restore)
 					.or(Err("Cannot set action more than one time".to_string()))?;
+			}
+			"--size" => {
+				action
+					.set(Action::Size)
+					.or(Err("Cannot set action more than one time".to_string()))?;
+			}
+			x if x == "--as-bytes" && *action == Some(Action::Size) => {
+				as_bytes = true;
 			}
 			"--sha" => {
 				action
@@ -383,22 +559,25 @@ fn run() -> Result<(), String> {
 					.set(Action::Cleanup)
 					.or(Err("Cannot set action more than one time".to_string()))?;
 			}
-			x if x.len() >= 9 && &x[0..9] == "--prefix=" => {
+			x if x.len() >= 9 && &x[0..9] == "--prefix=" && *action == Some(Action::Restore) => {
 				prefix = x[9..].to_string();
 			}
-			x if x.len() >= 10 && &x[0..10] == "--postfix=" => {
+			x if x.len() >= 10 && &x[0..10] == "--postfix=" && *action == Some(Action::Restore) => {
 				postfix = x[10..].to_string();
 			}
 			x => paths.push(PathBuf::from(x)),
 		};
 	}
 
-	match action.or_default(Action::Create).unwrap() {
+	match action.or_default(Action::Create) {
 		Action::Create => {
 			decompose_file(&paths)?;
 		}
 		Action::Restore => {
 			restore_file(&paths, &prefix, &postfix)?;
+		}
+		Action::Size => {
+			calc_size(&paths, as_bytes)?;
 		}
 		Action::CheckSum => {
 			output_shasum(&paths)?;
