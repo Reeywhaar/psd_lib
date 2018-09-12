@@ -70,9 +70,14 @@ fn printdots() -> Box<Fn() -> ()> {
 	return Box::new(out);
 }
 
-const GIGABYTE: f64 = 1_063_256_064.0;
-const MEGABYTE: f64 = 1_048_576.0;
-const KILOBYTE: f64 = 1_024.0;
+fn bytes_to_human_readable(size: u64) -> String {
+	let mask = 0b1111111111;
+	let gb = (size >> 10 * 3) & mask;
+	let mb = (size >> 10 * 2) & mask;
+	let kb = (size >> 10 * 1) & mask;
+	let b = size & mask;
+	return format!("{}GB {}MB {}KB {}B", gb, mb, kb, b);
+}
 
 fn measure_diff(old: &str, new: &str, human_readable: bool) -> Result<(), String> {
 	let mut old = PSDFile::new(File::open(old).or(Err("Cannot open original file".to_string()))?);
@@ -87,11 +92,7 @@ fn measure_diff(old: &str, new: &str, human_readable: bool) -> Result<(), String
 		stopdots();
 	};
 	if human_readable {
-		let gb = (size as f64 / GIGABYTE).floor();
-		let mb = ((size as f64 - (gb * GIGABYTE)) / MEGABYTE).floor();
-		let kb = ((size as f64 - (gb * GIGABYTE) - (mb * MEGABYTE)) / KILOBYTE).floor();
-		let b = size as f64 - (gb * GIGABYTE) - (mb * MEGABYTE) - (kb * KILOBYTE);
-		println!("{}GB {}MB {}KB {}B", gb, mb, kb, b);
+		println!("{}", bytes_to_human_readable(size));
 	} else {
 		println!("{}", size);
 	}

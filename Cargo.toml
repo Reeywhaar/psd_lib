@@ -1,11 +1,11 @@
 [package]
 name = "psd_lib"
-version = "0.8.2"
+version = "0.8.3"
 authors = ["Vyrtsev Mikhail <reeywhaar@gmail.com>"]
 
 [dependencies]
 sha2 = "0.7.1"
-bin_diff = { git = "https://github.com/Reeywhaar/bin_diff", tag="0.8.2" }
+bin_diff = { git = "https://github.com/Reeywhaar/bin_diff", tag="0.8.3" }
 threadpool = "1.7.1"
 num_cpus = "1.0"
 

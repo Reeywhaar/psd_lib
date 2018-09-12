@@ -55,16 +55,12 @@ use threadpool::ThreadPool;
 
 const EMPTY_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-const GIGABYTE: f64 = 1_063_256_064.0;
-const MEGABYTE: f64 = 1_048_576.0;
-const KILOBYTE: f64 = 1_024.0;
-
 fn bytes_to_human_readable(size: u64) -> String {
-	let size = size as f64;
-	let gb = (size / GIGABYTE).floor();
-	let mb = ((size - (gb * GIGABYTE)) / MEGABYTE).floor();
-	let kb = ((size - (gb * GIGABYTE) - (mb * MEGABYTE)) / KILOBYTE).floor();
-	let b = size - (gb * GIGABYTE) - (mb * MEGABYTE) - (kb * KILOBYTE);
+	let mask = 0b1111111111;
+	let gb = (size >> 10 * 3) & mask;
+	let mb = (size >> 10 * 2) & mask;
+	let kb = (size >> 10 * 1) & mask;
+	let b = size & mask;
 	return format!("{}GB {}MB {}KB {}B", gb, mb, kb, b);
 }
 
@@ -77,8 +73,8 @@ fn get_objects<'a, T: 'a + Read + Seek>(
 
 fn get_objects_parallel(
 	paths: &Vec<PathBuf>,
-) -> Result<Vec<Box<Vec<(String, u64, u64, String)>>>, String> {
-	let mut out = vec![Box::new(vec![]); paths.len()];
+) -> Result<Vec<Vec<(String, u64, u64, String)>>, String> {
+	let mut out = vec![vec![]; paths.len()];
 	let pool = ThreadPool::new(num_cpus::get());
 	let (tx, rx) = channel();
 	for (index, path) in paths.iter().enumerate() {
@@ -93,7 +89,7 @@ fn get_objects_parallel(
 				}
 			};
 			let obj = match get_objects(&mut input)
-				.map_err(|e| format!("path: {}\nerror: {}", path.to_string_lossy(), e))
+				.map_err(|e| format!("path: {}\nerror: {}", path.display(), e))
 			{
 				Ok(data) => data,
 				Err(e) => {
@@ -101,8 +97,7 @@ fn get_objects_parallel(
 					return;
 				}
 			};
-			tx.send(Ok((index, Box::new(obj.collect::<Vec<_>>()))))
-				.unwrap();
+			tx.send(Ok((index, obj.collect::<Vec<_>>()))).unwrap();
 		});
 	}
 
@@ -260,7 +255,7 @@ fn restore_files(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<()
 	Ok(())
 }
 
-fn get_unique_hashes(path: &PathBuf) -> Result<Box<Vec<(String, u64)>>, String> {
+fn get_unique_hashes(path: &PathBuf) -> Result<Vec<(String, u64)>, String> {
 	if path.extension().is_some() && path.extension().unwrap() == "decomposed" {
 		let file = File::open(&path).or(Err(format!("Cannot open path: {:?}", path)))?;
 		let file = BufReader::with_capacity(1024, file);
@@ -271,7 +266,7 @@ fn get_unique_hashes(path: &PathBuf) -> Result<Box<Vec<(String, u64)>>, String> 
 		let mut objdir = PathBuf::from(objdir);
 		objdir.push("decomposed_objects");
 
-		let mut output: Box<Vec<(String, u64)>> = Box::new(vec![]);
+		let mut output: Vec<(String, u64)> = vec![];
 
 		for hash in file.lines() {
 			let hash = hash.map_err(|e| e.to_string())?;
@@ -300,7 +295,7 @@ fn get_unique_hashes(path: &PathBuf) -> Result<Box<Vec<(String, u64)>>, String> 
 	let mut input = File::open(&path).or(Err(format!("Cannot open {:?}", path)))?;
 	let hashes = {
 		let obj = get_objects(&mut input)?;
-		obj.map(|x| (x.3, x.2)).fold(Box::new(vec![]), |mut c, x| {
+		obj.map(|x| (x.3, x.2)).fold(vec![], |mut c, x| {
 			if !c.contains(&x) {
 				c.push(x);
 			};
@@ -319,7 +314,7 @@ enum CalcMode {
 
 fn calc_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
 	let write_lock = Arc::new(Mutex::new(()));
-	let total_hashes: Arc<Mutex<Box<Vec<(String, u64)>>>> = Arc::new(Mutex::new(Box::new(vec![])));
+	let total_hashes: Arc<Mutex<Vec<(String, u64)>>> = Arc::new(Mutex::new(vec![]));
 	let pool = ThreadPool::new(num_cpus::get());
 	let (tx, rx) = channel();
 
@@ -359,13 +354,9 @@ fn calc_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
 
 			let size = hashes.iter().fold(0u64, |c, x| c + (x.1 as u64));
 			if as_bytes {
-				println!("{} - {}", path.to_string_lossy(), size);
+				println!("{} - {}", path.display(), size);
 			} else {
-				println!(
-					"{} - {}",
-					path.to_string_lossy(),
-					bytes_to_human_readable(size)
-				);
+				println!("{} - {}", path.display(), bytes_to_human_readable(size));
 			};
 
 			drop(wr_lock);
@@ -520,7 +511,7 @@ fn output_shasum(paths: &Vec<PathBuf>) -> Result<(), String> {
 			thread_sleep(Duration::from_millis(200));
 			continue;
 		}
-		println!("{} - {}", hashes[i], paths[i].to_string_lossy());
+		println!("{} - {}", hashes[i], paths[i].display());
 		i += 1;
 	}
 

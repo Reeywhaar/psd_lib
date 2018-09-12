@@ -28,8 +28,8 @@ pub struct PSDReader<'a, T: 'a + Read + Seek> {
 	file: &'a mut T,
 	indexes: Option<Indexes>,
 	pos: u64,
-	starts: Box<HashMap<String, u64>>,
-	ends: Box<HashMap<String, u64>>,
+	starts: HashMap<String, u64>,
+	ends: HashMap<String, u64>,
 	order: Vec<String>,
 	file_type: PSDType,
 }
@@ -40,8 +40,8 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			file: file,
 			indexes: None,
 			pos: 0,
-			starts: Box::new(HashMap::new()),
-			ends: Box::new(HashMap::new()),
+			starts: HashMap::new(),
+			ends: HashMap::new(),
 			order: vec![],
 			file_type: PSDType::PSD,
 		};
@@ -399,25 +399,28 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 							i
 						));
 						for j in 0.. {
-							let len_bound = {
-								let start = self.starts.get(
-									&format!("layers_resources/layers_info/layer_{}/channel_info/channel_{}:length", i, j)
-								);
-								if start.is_none() {
+							let len_bound = match self.starts.get(&format!("layers_resources/layers_info/layer_{}/channel_info/channel_{}:length", i, j)) {
+								None => {
 									break;
-								};
-								let end = self.ends.get(
-									&format!("layers_resources/layers_info/layer_{}/channel_info/channel_{}:length", i, j)
-								);
-								(start.unwrap().clone(), end.unwrap().clone())
+								}
+								Some(start) => {
+									let end = self.ends.get(
+										&format!("layers_resources/layers_info/layer_{}/channel_info/channel_{}:length", i, j)
+									).ok_or(
+										format!("layers_resources/layers_info/layer_{}/channel_info/channel_{}:length end wasn't found", i, j)
+									)?;
+									let len = *end - *start;
+									(*start, len)
+								}
 							};
 							{
-								let len_len = len_bound.1 - len_bound.0;
 								let init_pos = self.pos;
 								let _ = self.file.seek(SeekFrom::Start(len_bound.0));
-								let len = read_usize_be(&mut self.file, len_len as usize)
+								let len = read_usize_be(&mut self.file, len_bound.1 as usize)
 									.map_err(|x| x.to_string())?;
-								let _ = self.file.seek(SeekFrom::Start(init_pos));
+								self.file
+									.seek(SeekFrom::Start(init_pos))
+									.map_err(|x| x.to_string())?;
 								self.pos = init_pos;
 								self.start(&format!(
 									"layers_resources/layers_info/channel_data/layer_{}/channel_{}",
@@ -531,7 +534,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 #[cfg(test)]
 mod psd_reader_tests {
 	use super::PSDReader;
-	use std::fs::File;
+	use std::fs::{read_dir, File};
 
 	#[test]
 	fn get_indexes_test() {
@@ -554,11 +557,29 @@ mod psd_reader_tests {
 		assert_eq!(r.get("layers_resources").unwrap(), (61992, 2072));
 		assert_eq!(
 			r.get("layers_resources/layers_info/channel_data").unwrap(),
-			(62724, 1284)
+			(62724, 1282)
 		);
 		assert_eq!(r.get("image_data").unwrap(), (64064, 1404));
 
 		assert!(r.has("layers_resources/layers_info/layer_1"));
 		assert!(!r.has("layers_resources/layers_info/layer_2"));
+	}
+
+	#[test]
+	fn parse_test() {
+		let files = read_dir("./test_data")
+			.unwrap()
+			.filter(|entry| {
+				let path = entry.as_ref().unwrap().path();
+				let ext = path.extension();
+				return ext.is_some() && (ext.unwrap() == "psd" || ext.unwrap() == "psb");
+			})
+			.map(|x| x.unwrap().path());
+		for file in files {
+			let mut file = File::open(&file).unwrap();
+			let mut reader = PSDReader::new(&mut file);
+			let indexes = reader.get_indexes();
+			assert!(indexes.is_ok());
+		}
 	}
 }
