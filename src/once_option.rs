@@ -20,11 +20,6 @@ impl<T> OnceOption<T> {
 		Ok(())
 	}
 
-	#[allow(dead_code)]
-	pub fn unwrap(self) -> T {
-		return self.v.unwrap();
-	}
-
 	pub fn or_default(self, def: T) -> T {
 		if self.v.is_some() {
 			return self.v.unwrap();

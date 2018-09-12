@@ -161,7 +161,9 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		let end = self.pos + len as u64;
 
 		while self.pos < end {
-			self.file.seek(SeekFrom::Start(self.pos)).unwrap();
+			self.file
+				.seek(SeekFrom::Start(self.pos))
+				.map_err(|x| x.to_string())?;
 			self.start(&format!(
 				"image_resources/image_resource_{}",
 				resource_index
@@ -405,7 +407,8 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 								let len_len = len_bound.1 - len_bound.0;
 								let init_pos = self.pos;
 								let _ = self.file.seek(SeekFrom::Start(len_bound.0));
-								let len = read_usize_be(&mut self.file, len_len as usize).unwrap();
+								let len = read_usize_be(&mut self.file, len_len as usize)
+									.map_err(|x| x.to_string())?;
 								let _ = self.file.seek(SeekFrom::Start(init_pos));
 								self.pos = init_pos;
 								self.start(&format!(
@@ -469,7 +472,10 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			return Ok(self.indexes.as_ref().unwrap());
 		};
 
-		let pos = self.file.seek(SeekFrom::Current(0)).unwrap();
+		let pos = self
+			.file
+			.seek(SeekFrom::Current(0))
+			.map_err(|x| x.to_string())?;
 
 		self.get_header()?;
 		self.get_color_mode()?;
@@ -500,7 +506,9 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		self.ends.clear();
 
 		self.indexes = Some(indexes);
-		self.file.seek(SeekFrom::Start(pos)).unwrap();
+		self.file
+			.seek(SeekFrom::Start(pos))
+			.map_err(|x| x.to_string())?;
 		return Ok(self.indexes.as_ref().unwrap());
 	}
 }

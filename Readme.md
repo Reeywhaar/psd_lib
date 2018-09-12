@@ -7,7 +7,7 @@ Package includes a library and four binaries:
 
   `psd_decompose` allows to decompose psd file into chunks of objects which it store in the `decomposed_objects` directory and `{$file}.psd.decomposed` text file next to original file.
 
-  The reason for this binary is an ability to decompose multiple files in the same directory and store them as chunks, therefore reducing the total size because of shared chunks. In my case size size reduce is from 10% up to 50%.
+  The reason for this binary is an ability to decompose multiple files in the same directory and store them as chunks, therefore reducing the total size because of shared chunks. In my case size reduce is from 10% up to 50%.
 
   Usage:
 
@@ -19,6 +19,7 @@ Package includes a library and four binaries:
      --postfix: append string to restored filename before extension
 
   $: psd_decompose --size [--as-bytes] [...file.psd.decomposed > 1]
+     Works in two modes:
      * first: if all of the paths is decomposed object files, then it calculates presumable size of decompressed files
      * second: calculates size of prospective "decomposed_objects" directory and outputs it\'s next to accumulated size of given paths, which shows is it worth to decompose files
 

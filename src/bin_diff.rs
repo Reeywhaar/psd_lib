@@ -34,20 +34,19 @@ use psd_lib::psd_file::PSDFile;
 use std::env::{args, var};
 use std::fs::File;
 use std::process::exit;
-use std::sync::mpsc;
+use std::sync::mpsc::channel;
 use std::thread;
 use std::time::Duration;
 
 fn printdots() -> Box<Fn() -> ()> {
-	let (ttx, rrx) = mpsc::channel();
-	let (tx, rx) = mpsc::channel();
+	let (ttx, rrx) = channel();
+	let (tx, rx) = channel();
 	thread::spawn(move || {
 		let mut counter = 0u8;
 		let mut elapsed = 0;
 		loop {
 			if let Ok(_) = rrx.try_recv() {
 				eprint!("\n");
-				tx.send(()).unwrap();
 				break;
 			} else {
 				thread::sleep(Duration::from_millis(10));
@@ -60,6 +59,7 @@ fn printdots() -> Box<Fn() -> ()> {
 				}
 			}
 		}
+		tx.send(()).unwrap();
 	});
 
 	let out = move || {

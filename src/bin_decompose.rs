@@ -31,8 +31,10 @@
 //!
 
 extern crate bin_diff;
+extern crate num_cpus;
 extern crate psd_lib;
 extern crate sha2;
+extern crate threadpool;
 
 mod once_option;
 
@@ -45,8 +47,26 @@ use std::fs::{create_dir_all, metadata, read_dir, remove_file, File};
 use std::io::{copy, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::exit;
+use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
+use std::thread::sleep as thread_sleep;
+use std::time::Duration;
+use threadpool::ThreadPool;
 
 const EMPTY_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+const GIGABYTE: f64 = 1_063_256_064.0;
+const MEGABYTE: f64 = 1_048_576.0;
+const KILOBYTE: f64 = 1_024.0;
+
+fn bytes_to_human_readable(size: u64) -> String {
+	let size = size as f64;
+	let gb = (size / GIGABYTE).floor();
+	let mb = ((size - (gb * GIGABYTE)) / MEGABYTE).floor();
+	let kb = ((size - (gb * GIGABYTE) - (mb * MEGABYTE)) / KILOBYTE).floor();
+	let b = size - (gb * GIGABYTE) - (mb * MEGABYTE) - (kb * KILOBYTE);
+	return format!("{}GB {}MB {}KB {}B", gb, mb, kb, b);
+}
 
 fn get_objects<'a, T: 'a + Read + Seek>(
 	input: T,
@@ -55,21 +75,77 @@ fn get_objects<'a, T: 'a + Read + Seek>(
 	return LinesWithHashIterator::new(file);
 }
 
-fn decompose_file(paths: &Vec<PathBuf>) -> Result<(), String> {
-	for path in paths {
-		let mut input = File::open(&path).or(Err(format!("Cannot open {:?}", path)))?;
-		let objects = {
-			let obj = get_objects(&mut input)?;
-			obj.collect::<Vec<_>>()
+fn get_objects_parallel(
+	paths: &Vec<PathBuf>,
+) -> Result<Vec<Box<Vec<(String, u64, u64, String)>>>, String> {
+	let mut out = vec![Box::new(vec![]); paths.len()];
+	let pool = ThreadPool::new(num_cpus::get());
+	let (tx, rx) = channel();
+	for (index, path) in paths.iter().enumerate() {
+		let tx = tx.clone();
+		let path = path.clone();
+		pool.execute(move || {
+			let mut input = match File::open(&path).or(Err(format!("Cannot open {:?}", path))) {
+				Ok(i) => i,
+				Err(e) => {
+					tx.send(Err(e)).unwrap();
+					return;
+				}
+			};
+			let obj = match get_objects(&mut input)
+				.map_err(|e| format!("path: {}\nerror: {}", path.to_string_lossy(), e))
+			{
+				Ok(data) => data,
+				Err(e) => {
+					tx.send(Err(e)).unwrap();
+					return;
+				}
+			};
+			tx.send(Ok((index, Box::new(obj.collect::<Vec<_>>()))))
+				.unwrap();
+		});
+	}
+
+	for _ in 0..paths.len() {
+		if pool.panic_count() > 0 {
+			return Err("Failed getting objects".to_string());
 		};
+		let (index, obj) = rx.recv().map_err(|e| e.to_string())??;
+		out[index] = obj;
+	}
+
+	Ok(out)
+}
+
+fn decompose_files(paths: &Vec<PathBuf>) -> Result<(), String> {
+	let objects_store = get_objects_parallel(&paths)?;
+
+	for (index, path) in paths.iter().enumerate() {
+		let mut input = File::open(&path).or(Err(format!("Cannot open {:?}", path)))?;
+		let objects = &objects_store[index];
 
 		eprintln!("processing {:?}", path);
 
-		let objdir = path.parent().expect("Parent directory not found");
+		let objdir = path.parent().ok_or("Parent directory not found")?;
 		let mut objdir = PathBuf::from(objdir);
 		objdir.push("decomposed_objects");
 
-		for (_label, start, size, hash) in &objects {
+		let mut indexfileloc = PathBuf::from(path);
+		if indexfileloc.extension().is_some() {
+			let ext = (&indexfileloc)
+				.extension()
+				.map(|x| x.to_os_string().into_string().unwrap())
+				.unwrap();
+			indexfileloc.set_extension(format!("{}.{}", ext, "decomposed"));
+		} else {
+			indexfileloc.set_extension("decomposed");
+		}
+
+		let indexfile = File::create(&indexfileloc)
+			.or(Err(format!("Cannot create index file: {:?}", indexfileloc)))?;
+		let mut indexfile = BufWriter::with_capacity(1024, indexfile);
+
+		for (_label, start, size, hash) in objects.iter() {
 			if hash == EMPTY_HASH {
 				continue;
 			};
@@ -80,6 +156,12 @@ fn decompose_file(paths: &Vec<PathBuf>) -> Result<(), String> {
 			hashloc.push(hash);
 
 			if hashloc.exists() {
+				indexfile
+					.write(format!("{}\n", hash).as_bytes())
+					.or(Err(format!(
+						"Cannot write to index file: {:?}",
+						indexfileloc
+					)))?;
 				continue;
 			}
 
@@ -97,24 +179,7 @@ fn decompose_file(paths: &Vec<PathBuf>) -> Result<(), String> {
 			eprintln!("writing {:?}", hashloc);
 			copy(&mut chunk, &mut hashfile)
 				.or(Err(format!("Cannot write hash object: {:?}", hashloc)))?;
-		}
 
-		let mut indexfileloc = PathBuf::from(path);
-		if indexfileloc.extension().is_some() {
-			let ext = (&indexfileloc)
-				.extension()
-				.map(|x| x.to_os_string().into_string().unwrap())
-				.unwrap();
-			indexfileloc.set_extension(format!("{}.{}", ext, "decomposed"));
-		} else {
-			indexfileloc.set_extension("decomposed");
-		}
-
-		let indexfile = File::create(&indexfileloc)
-			.or(Err(format!("Cannot create index file: {:?}", indexfileloc)))?;
-		let mut indexfile = BufWriter::with_capacity(1024, indexfile);
-
-		for (_, _, _, hash) in objects {
 			indexfile
 				.write(format!("{}\n", hash).as_bytes())
 				.or(Err(format!(
@@ -129,7 +194,7 @@ fn decompose_file(paths: &Vec<PathBuf>) -> Result<(), String> {
 	Ok(())
 }
 
-fn restore_file(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<(), String> {
+fn restore_files(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<(), String> {
 	for path in paths {
 		if path.extension().unwrap() != "decomposed" {
 			return Err("File extension should be \".decomposed\" or program fails".to_string());
@@ -195,98 +260,191 @@ fn restore_file(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<(),
 	Ok(())
 }
 
-const GIGABYTE: f64 = 1_063_256_064.0;
-const MEGABYTE: f64 = 1_048_576.0;
-const KILOBYTE: f64 = 1_024.0;
+fn get_unique_hashes(path: &PathBuf) -> Result<Box<Vec<(String, u64)>>, String> {
+	if path.extension().is_some() && path.extension().unwrap() == "decomposed" {
+		let file = File::open(&path).or(Err(format!("Cannot open path: {:?}", path)))?;
+		let file = BufReader::with_capacity(1024, file);
 
-fn bytes_to_human_readable(size: u64) -> String {
-	let gb = (size as f64 / GIGABYTE).floor();
-	let mb = ((size as f64 - (gb * GIGABYTE)) / MEGABYTE).floor();
-	let kb = ((size as f64 - (gb * GIGABYTE) - (mb * MEGABYTE)) / KILOBYTE).floor();
-	let b = size as f64 - (gb * GIGABYTE) - (mb * MEGABYTE) - (kb * KILOBYTE);
-	return format!("{}GB {}MB {}KB {}B", gb, mb, kb, b);
-}
+		let objdir = path
+			.parent()
+			.ok_or("Parent directory not found".to_string())?;
+		let mut objdir = PathBuf::from(objdir);
+		objdir.push("decomposed_objects");
 
-fn calc_presumed_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
-	let mut total_hashes: Box<Vec<(String, u64)>> = Box::new(vec![]);
+		let mut output: Box<Vec<(String, u64)>> = Box::new(vec![]);
 
-	for path in paths {
-		let mut input = File::open(&path).or(Err(format!("Cannot open {:?}", path)))?;
+		for hash in file.lines() {
+			let hash = hash.map_err(|e| e.to_string())?;
 
-		let hashes = {
-			let obj = get_objects(&mut input)?;
-			obj.map(|x| (x.3, x.2)).fold(Box::new(vec![]), |mut c, x| {
-				if !c.contains(&x) {
-					c.push(x);
-				};
-				return c;
-			})
-		};
+			if hash == EMPTY_HASH {
+				output.push((hash, 0));
+				continue;
+			}
 
-		let size = hashes.iter().fold(0u64, |c, x| c + (x.1 as u64));
-		if as_bytes {
-			println!("{} - {}", path.to_string_lossy(), size);
-		} else {
-			println!(
-				"{} - {}",
-				path.to_string_lossy(),
-				bytes_to_human_readable(size)
-			);
+			let mut hashdir = objdir.clone();
+			hashdir.push(&hash[0..2]);
+			let mut hashloc = hashdir.clone();
+			hashloc.push(hash.clone());
+
+			if !hashloc.exists() {
+				return Err(format!("hash {:?} doesn't exists", hashloc));
+			}
+
+			let hash_meta = metadata(&hashloc).map_err(|e| e.to_string())?;
+			output.push((hash, hash_meta.len()));
 		}
 
-		hashes.into_iter().for_each(|x| {
-			if !total_hashes.contains(&x) {
-				total_hashes.push(x);
+		return Ok(output);
+	};
+
+	let mut input = File::open(&path).or(Err(format!("Cannot open {:?}", path)))?;
+	let hashes = {
+		let obj = get_objects(&mut input)?;
+		obj.map(|x| (x.3, x.2)).fold(Box::new(vec![]), |mut c, x| {
+			if !c.contains(&x) {
+				c.push(x);
 			};
+			return c;
+		})
+	};
+
+	return Ok(hashes);
+}
+
+#[derive(Clone)]
+enum CalcMode {
+	Composed,
+	Decomposed,
+}
+
+fn calc_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
+	let write_lock = Arc::new(Mutex::new(()));
+	let total_hashes: Arc<Mutex<Box<Vec<(String, u64)>>>> = Arc::new(Mutex::new(Box::new(vec![])));
+	let pool = ThreadPool::new(num_cpus::get());
+	let (tx, rx) = channel();
+
+	let mode = {
+		let decomposed_mode = paths.into_iter().all(|x| {
+			return x.extension().is_some() && x.extension().unwrap() == "decomposed";
+		});
+
+		let composed_mode = paths.into_iter().all(|x| {
+			return x.extension().is_some() && x.extension().unwrap() != "decomposed";
+		});
+
+		match (decomposed_mode, composed_mode) {
+			(true, false) => CalcMode::Decomposed,
+			(false, true) => CalcMode::Composed,
+			_ => {
+				return Err("Invalid mode".to_string());
+			}
+		}
+	};
+
+	for path in paths {
+		let path = path.clone();
+		let wr_clone = Arc::clone(&write_lock);
+		let th_clone = Arc::clone(&total_hashes);
+		let tx = tx.clone();
+		let mode = mode.clone();
+		pool.execute(move || {
+			let hashes = get_unique_hashes(&path);
+			if hashes.is_err() {
+				tx.send(hashes.map(|_| ())).unwrap();
+				return;
+			};
+			let hashes = hashes.unwrap();
+
+			let wr_lock = wr_clone.lock().unwrap();
+
+			let size = hashes.iter().fold(0u64, |c, x| c + (x.1 as u64));
+			if as_bytes {
+				println!("{} - {}", path.to_string_lossy(), size);
+			} else {
+				println!(
+					"{} - {}",
+					path.to_string_lossy(),
+					bytes_to_human_readable(size)
+				);
+			};
+
+			drop(wr_lock);
+
+			let mut total_hashes = th_clone.lock().unwrap();
+
+			if let CalcMode::Composed = mode {
+				hashes.into_iter().for_each(|x| {
+					if !total_hashes.contains(&x) {
+						total_hashes.push(x);
+					};
+				});
+			} else {
+				hashes.into_iter().for_each(|x| {
+					total_hashes.push(x);
+				});
+			};
+
+			tx.send(Ok(())).unwrap();
 		});
 	}
 
-	let filesize = paths
-		.iter()
-		.map(|x| {
-			let meta = metadata(x).unwrap();
-			meta.len()
-		})
-		.fold(0u64, |c, x| c + x);
+	for _path in paths {
+		rx.recv().unwrap()?;
+	}
 
-	let size = total_hashes.iter().fold(0u64, |c, x| c + (x.1 as u64));
-	if as_bytes {
-		println!("\ntotal size         - {}", filesize);
-		println!("decomposed_objects - {}", size);
+	if let CalcMode::Composed = mode {
+		let filesize = paths
+			.iter()
+			.map(|x| {
+				let meta = metadata(x).unwrap();
+				meta.len()
+			})
+			.fold(0u64, |c, x| c + x);
+
+		let size = total_hashes
+			.lock()
+			.unwrap()
+			.iter()
+			.fold(0u64, |c, x| c + (x.1 as u64));
+
+		if as_bytes {
+			println!("\ntotal size         - {}", filesize);
+			println!("decomposed_objects - {}", size);
+		} else {
+			println!(
+				"\ntotal size         - {}",
+				bytes_to_human_readable(filesize)
+			);
+			println!("decomposed_objects - {}", bytes_to_human_readable(size));
+		};
 	} else {
-		println!(
-			"\ntotal size         - {}",
-			bytes_to_human_readable(filesize)
-		);
-		println!("decomposed_objects - {}", bytes_to_human_readable(size));
-	};
+		let size = total_hashes
+			.lock()
+			.unwrap()
+			.iter()
+			.fold(0u64, |c, x| c + (x.1 as u64));
+
+		if as_bytes {
+			println!("\ntotal size - {}", size);
+		} else {
+			println!("\ntotal size - {}", bytes_to_human_readable(size));
+		};
+	}
 
 	Ok(())
 }
 
-fn calc_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
-	let mut total_size: u64 = 0;
+fn get_shasum(path: &PathBuf) -> Result<String, String> {
+	let file = File::open(&path).or(Err(format!("Cannot open path: {:?}", path)))?;
+	let mut file = BufReader::with_capacity(1024, file);
 
-	let decomposed_mode = paths.into_iter().all(|x| {
-		if x.extension().is_some() && x.extension().unwrap() == "decomposed" {
-			return true;
-		};
-		return false;
-	});
+	let buf = &mut [0u8; 1024 * 64];
+	let mut hasher = Sha256::default();
 
-	if !decomposed_mode {
-		return calc_presumed_size(paths, as_bytes);
-	};
-
-	for path in paths {
-		let file = File::open(&path).or(Err(format!("Cannot open path: {:?}", path)))?;
-		let file = BufReader::with_capacity(1024, file);
-
+	if path.extension().is_some() && path.extension().unwrap() == "decomposed" {
 		let objdir = path.parent().expect("Parent directory not found");
 		let mut objdir = PathBuf::from(objdir);
 		objdir.push("decomposed_objects");
-
-		let mut acc_size: u64 = 0;
 
 		for hash in file.lines() {
 			let hash = hash.map_err(|e| e.to_string())?;
@@ -304,107 +462,66 @@ fn calc_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
 				return Err(format!("hash {:?} doesn't exists", hashloc));
 			}
 
-			let hash_meta = metadata(&hashloc).map_err(|e| e.to_string())?;
-			acc_size += hash_meta.len();
-		}
-
-		if as_bytes {
-			println!("{} - {}", &path.to_string_lossy(), acc_size);
-		} else {
-			println!(
-				"{} - {}",
-				&path.to_string_lossy(),
-				bytes_to_human_readable(acc_size)
-			);
-		}
-
-		total_size += acc_size;
-	}
-
-	if as_bytes {
-		println!("\ntotal size - {}", &total_size);
-	} else {
-		println!("\ntotal size - {}", bytes_to_human_readable(total_size));
-	}
-
-	Ok(())
-}
-
-fn output_shasum(paths: &Vec<PathBuf>) -> Result<(), String> {
-	for path in paths {
-		let file = File::open(&path).or(Err(format!("Cannot open path: {:?}", path)))?;
-		if path.extension().is_some() && path.extension().unwrap() == "decomposed" {
-			let file = BufReader::with_capacity(1024, file);
-			let objdir = path.parent().expect("Parent directory not found");
-			let mut objdir = PathBuf::from(objdir);
-			objdir.push("decomposed_objects");
-
-			let mut hasher = Sha256::default();
-			let mut buf = vec![0; 1024 * 64];
-
-			for hash in file.lines() {
-				let hash = hash.map_err(|e| e.to_string())?;
-
-				if hash == EMPTY_HASH {
-					continue;
-				}
-
-				let mut hashdir = objdir.clone();
-				hashdir.push(&hash[0..2]);
-				let mut hashloc = hashdir.clone();
-				hashloc.push(hash);
-
-				if !hashloc.exists() {
-					return Err(format!("hash {:?} doesn't exists", hashloc));
-				}
-
-				let mut hashfile =
-					File::open(&hashloc).or(Err(format!("Cannot open hash {:?}", &hashloc)))?;
-
-				loop {
-					let read = hashfile
-						.read(&mut buf)
-						.or(Err(format!("Cannot read decomposed chunk {:?}", &hashloc)))?;
-					if read == 0 {
-						break;
-					};
-					hasher.input(&buf[..read]);
-				}
-			}
-
-			let hash = hasher
-				.result()
-				.iter()
-				.map(|b| format!("{:02x}", b))
-				.collect::<Vec<String>>()
-				.join("");
-
-			println!("{} - {}", hash, path.to_string_lossy());
-		} else {
-			let mut file = BufReader::with_capacity(1024 * 64, file);
-
-			let mut hasher = Sha256::default();
-			let mut buf = vec![0; 1024 * 64];
+			let mut hashfile =
+				File::open(&hashloc).or(Err(format!("Cannot open hash {:?}", &hashloc)))?;
 
 			loop {
-				let read = file
-					.read(&mut buf)
-					.or(Err(format!("Cannot read file {:?}", &path)))?;
+				let read = hashfile
+					.read(buf)
+					.or(Err(format!("Cannot read decomposed chunk {:?}", &hashloc)))?;
 				if read == 0 {
 					break;
 				};
 				hasher.input(&buf[..read]);
 			}
-
-			let hash = hasher
-				.result()
-				.iter()
-				.map(|b| format!("{:02x}", b))
-				.collect::<Vec<String>>()
-				.join("");
-
-			println!("{} - {}", hash, path.to_string_lossy());
 		}
+	} else {
+		loop {
+			let read = file
+				.read(buf)
+				.or(Err(format!("Cannot read file {:?}", &path)))?;
+			if read == 0 {
+				break;
+			};
+			hasher.input(&buf[..read]);
+		}
+	}
+
+	return Ok(hasher
+		.result()
+		.iter()
+		.map(|b| format!("{:02x}", b))
+		.collect::<Vec<String>>()
+		.join(""));
+}
+
+fn output_shasum(paths: &Vec<PathBuf>) -> Result<(), String> {
+	let paths_len = paths.len();
+	let hashes = Arc::new(Mutex::new(vec!["".to_string(); paths.len()]));
+	let pool = ThreadPool::new(num_cpus::get());
+	for (index, path) in paths.iter().enumerate() {
+		let path = path.clone();
+		let hp = Arc::clone(&hashes);
+		pool.execute(move || {
+			let sum = get_shasum(&path).unwrap();
+			let mut hashes = hp.lock().unwrap();
+			hashes[index] = sum;
+		});
+	}
+
+	let mut i = 0;
+	while i < paths_len {
+		if pool.panic_count() > 0 {
+			return Err("program failed".to_string());
+		};
+		let hashes = hashes.lock().unwrap();
+		if hashes[i] == "" {
+			drop(hashes);
+			thread_sleep(Duration::from_millis(200));
+			continue;
+		}
+		println!("{} - {}", hashes[i], paths[i].to_string_lossy());
+		i += 1;
 	}
 
 	return Ok(());
@@ -422,7 +539,7 @@ fn cleanup() -> Result<(), String> {
 	}
 
 	let indexes = read_dir(&objdir)
-		.or(Err("Cannot read decomposed_objects directory".to_string()))?
+		.or(Err("Cannot read decomposed_objects directory"))?
 		.scan((), |_, x| x.ok())
 		.flat_map(|sub_dir| {
 			return read_dir(sub_dir.path()).unwrap();
@@ -516,7 +633,7 @@ $: psd_decompose --remove [...file.decomposed > 1]
    removes decomposed index file and rebuild (actually gather all the hashes from other files in the directory and removes hashes which are orphaned) decomposed_opjects directory.
 
 $: psd_decompose --cleanup
-   perform cleanup of \"decomposed_objects\" directory which consists of populating unique index of every hash of every .decomposed file and removing every hash which doesn't said index contains.
+   performs cleanup of \"decomposed_objects\" directory which consists of populating unique index of every hash of every .decomposed file and removing every hash which doesn't said index contains.
 	";
 
 	let args = args().skip(1);
@@ -571,10 +688,10 @@ $: psd_decompose --cleanup
 
 	match action.or_default(Action::Create) {
 		Action::Create => {
-			decompose_file(&paths)?;
+			decompose_files(&paths)?;
 		}
 		Action::Restore => {
-			restore_file(&paths, &prefix, &postfix)?;
+			restore_files(&paths, &prefix, &postfix)?;
 		}
 		Action::Size => {
 			calc_size(&paths, as_bytes)?;

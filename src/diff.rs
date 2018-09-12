@@ -234,7 +234,7 @@ mod apply_diff_tests {
 			0x08, 0x69, 0x39, 0x0f, 0x8d, 0xe2, 0x9a, 0xef, // skipped 32
 		];
 
-		let mut output = Cursor::new(vec![0, 136]);
+		let mut output = Cursor::new(vec![0; 136]);
 		apply_diff(&mut file, &mut diff, &mut output).unwrap();
 		assert_eq!(output.get_ref(), &result);
 	}
@@ -302,7 +302,7 @@ mod apply_diff_tests {
 			0x08, 0x69, 0x39, 0x0f, 0x8d, 0xe2, 0x9a, 0xef, // skipped 32
 		];
 
-		let mut output = Cursor::new(vec![0, 136]);
+		let mut output = Cursor::new(vec![0]);
 		apply_diff(&mut file, &mut diff, &mut output).unwrap();
 		assert!(output.get_ref() != &result);
 	}
@@ -325,7 +325,7 @@ mod apply_diff_tests {
 			0x00, 0x01, 0x00, 0x00, 0x00, 0x20, // add 32
 		]);
 
-		let mut output = Cursor::new(vec![0, 136]);
+		let mut output = Cursor::new(vec![]);
 		let res = apply_diff(&mut file, &mut diff, &mut output);
 		assert_eq!(res.unwrap_err().to_string(), "Header mismatch".to_string())
 	}
@@ -348,7 +348,7 @@ mod apply_diff_tests {
 			0x00, 0x01, 0x00, 0x00, 0x00, 0x20, // add 32
 		]);
 
-		let mut output = Cursor::new(vec![0, 136]);
+		let mut output = Cursor::new(vec![]);
 		let res = apply_diff(&mut file, &mut diff, &mut output);
 		assert_eq!(
 			res.unwrap_err().to_string(),
