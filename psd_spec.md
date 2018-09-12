@@ -27,8 +27,8 @@ image_resources : *image_resources_length
 layers_resources_length : (4 | 8) psd | psb accordingly
 layers_resources : *layers_resources_length
   layers_info_length : (4 | 8) psd | psb accordingly
-  layers_info : *layers_info_length
-    layer_count : 2
+  layers_info : pad(*layers_info_length, 2)
+    layer_count : *layers_info_length == 0 ? 0 | 2
     # for i = 0; i < *layer_count; i++
       layer_{n} : {...}
         rect : 16
@@ -67,7 +67,7 @@ layers_resources : *layers_resources_length
           channel_{n} : {...}
             compression_method : 2
             data : */layers/resources/layers_info/layer_{n}/channel_info/channel_{n}/length - 2
-  padding : (pos(layers_info) + *layers_info_length) - pos()
+    padding : (pos(layers_info) + *layers_info_length) - pos()
   global_mask_length : 4
   global_mask : *global_mask_length
   additional_layer_information : {...pos(layers_resources) + *layers_resources_length}

@@ -360,18 +360,26 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 
 		self.start("layers_resources");
 		{
-			let layers_info_len =
-				self.advance_and_read("layers_resources/layers_info_length", len)?;
+			let layers_info_len = Self::pad(
+				self.advance_and_read("layers_resources/layers_info_length", len)?,
+				2,
+			);
+
 			let layers_info_end = self.pos + layers_info_len;
 
 			self.start("layers_resources/layers_info");
 			{
-				let layers_count =
-					self.advance_and_read("layers_resources/layers_info/layer_count", 2)?;
+				let layers_count = match layers_info_len {
+					0 => {
+						self.advance("layers_resources/layers_info/layer_count", 0);
+						0
+					}
+					_ => self.advance_and_read("layers_resources/layers_info/layer_count", 2)?,
+				};
+
 				let mut layers_count = u_to_i16_be(layers_count as u16);
-				// let channel_exists = layers_count < 0;
 				if layers_count < 0 {
-					layers_count *= -1;
+					layers_count = -layers_count;
 				}
 
 				let mut layer_index = 0;
@@ -428,14 +436,21 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 							i
 						));
 					}
-
-					if self.pos <= layers_info_end {
-						let diff = layers_info_end - self.pos;
-						self.advance("layers_resources/padding", diff);
-					}
 				}
 				self.end("layers_resources/layers_info/channel_data");
-				self.pos = layers_info_end;
+
+				if self.pos < layers_info_end {
+					let diff = layers_info_end - self.pos;
+					self.advance("layers_resources/layers_info/padding", diff);
+				} else if self.pos > layers_info_end {
+					return Err("layers_resources/layers_info bound overflow".to_string());
+				} else {
+					self.advance("layers_resources/layers_info/padding", 0);
+				}
+
+				if self.pos != layers_info_end {
+					return Err("layers/resources position mismatch".to_string());
+				}
 			}
 			self.end("layers_resources/layers_info");
 

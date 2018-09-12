@@ -15,7 +15,7 @@ const LINES: [&str; 15] = [
 	"layers_resources/layers_info/layer_count",
 	"layers_resources/layers_info/layer_{n}",
 	"layers_resources/layers_info/channel_data/layer_{n}/channel_{n}",
-	"layers_resources/padding",
+	"layers_resources/layers_info/padding",
 	"layers_resources/global_mask_length",
 	"layers_resources/global_mask",
 	"layers_resources/additional_layer_information",
