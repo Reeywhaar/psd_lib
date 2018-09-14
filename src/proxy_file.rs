@@ -2,6 +2,7 @@ use std::convert::From;
 use std::fs::{remove_file, rename, File};
 use std::io::{stdout, BufWriter, Error, Result as IOResult, Stdout, Write};
 use std::ops::Drop;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn timestamp() -> String {
@@ -9,11 +10,11 @@ fn timestamp() -> String {
 	let elapsed = now
 		.duration_since(UNIX_EPOCH)
 		.expect("Error getting timestamp");
-	return elapsed.as_secs().to_string();
+	elapsed.as_secs().to_string()
 }
 
 fn create_tempname(path: &str) -> String {
-	return format!("{}.tmp.{}", path, timestamp());
+	format!("{}.tmp.{}", path, timestamp())
 }
 
 pub struct ProxyFile {
@@ -24,8 +25,16 @@ pub struct ProxyFile {
 }
 
 impl ProxyFile {
-	pub fn set_err(&mut self, err: Error) {
-		self.err = Some(err);
+	pub fn end(mut self) -> Result<(), String> {
+		if self.original_path == "-" {
+			(&mut self.writer).flush().map_err(|x| x.to_string())?;
+		} else if self.err.is_some() {
+			remove_file(&self.temp_path).map_err(|x| x.to_string())?;
+		} else {
+			(&mut self.writer).flush().map_err(|x| x.to_string())?;
+			rename(&self.temp_path, &self.original_path).map_err(|x| x.to_string())?;
+		};
+		Ok(())
 	}
 }
 
@@ -38,7 +47,7 @@ impl Write for ProxyFile {
 		if let Err(ref e) = res {
 			self.err = Some(Error::from(e.kind()));
 		};
-		return res;
+		res
 	}
 
 	fn flush(&mut self) -> IOResult<()> {
@@ -49,7 +58,7 @@ impl Write for ProxyFile {
 		if let Err(ref e) = res {
 			self.err = Some(Error::from(e.kind()));
 		};
-		return res;
+		res
 	}
 }
 
@@ -74,6 +83,13 @@ impl From<String> for ProxyFile {
 	}
 }
 
+impl From<PathBuf> for ProxyFile {
+	fn from(path: PathBuf) -> Self {
+		let path = path.to_string_lossy().to_string();
+		Self::from(path)
+	}
+}
+
 impl From<Stdout> for ProxyFile {
 	fn from(v: Stdout) -> Self {
 		Self {
@@ -87,18 +103,11 @@ impl From<Stdout> for ProxyFile {
 
 impl Drop for ProxyFile {
 	fn drop(&mut self) {
-		if self.original_path == "-" {
-			self.writer.flush().expect("Cannot flush stdout");
-		} else {
-			if self.err.is_some() {
-				remove_file(&self.temp_path).expect("Cannot remove tempfile");
-			} else {
-				self.writer
-					.flush()
-					.expect("Cannot flush output to tempfile");
-				rename(&self.temp_path, &self.original_path)
-					.expect("Cannot move tempfile to destination");
-			}
-		}
+		if self.original_path != "-" {
+			let path = PathBuf::from(&self.temp_path);
+			if path.exists() {
+				remove_file(&path).expect("Cannot remove temp file");
+			};
+		};
 	}
 }

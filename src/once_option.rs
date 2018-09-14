@@ -22,16 +22,16 @@ impl<T> OnceOption<T> {
 
 	pub fn or_default(self, def: T) -> T {
 		if self.v.is_some() {
-			return self.v.unwrap();
+			self.v.unwrap()
 		} else {
-			return def;
-		};
+			def
+		}
 	}
 }
 
 impl<T> AsRef<Option<T>> for OnceOption<T> {
 	fn as_ref(&self) -> &Option<T> {
-		return &self.v;
+		&self.v
 	}
 }
 
@@ -39,6 +39,6 @@ impl<T> Deref for OnceOption<T> {
 	type Target = Option<T>;
 
 	fn deref(&self) -> &Self::Target {
-		return &self.v;
+		&self.v
 	}
 }

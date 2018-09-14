@@ -36,15 +36,15 @@ pub struct PSDReader<'a, T: 'a + Read + Seek> {
 
 impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 	pub fn new(file: &'a mut T) -> Self {
-		return Self {
-			file: file,
+		Self {
+			file,
 			indexes: None,
 			pos: 0,
 			starts: HashMap::new(),
 			ends: HashMap::new(),
 			order: vec![],
 			file_type: PSDType::PSD,
-		};
+		}
 	}
 
 	fn start(&mut self, label: &str) {
@@ -74,7 +74,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		self.pos += size;
 		self.end(label);
 
-		return Ok(res as u64);
+		Ok(res as u64)
 	}
 
 	fn advance_and_read_vec(&mut self, label: &str, size: u64) -> Result<Vec<u8>, String> {
@@ -90,7 +90,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		self.pos += size as u64;
 		self.end(label);
 
-		return Ok(buf);
+		Ok(buf)
 	}
 
 	fn advance_and_check(&mut self, label: &str, subj: &[u8]) -> Result<(), String> {
@@ -99,7 +99,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			return Err(format!("Check failed on \"{}\"", label));
 		}
 
-		return Ok(());
+		Ok(())
 	}
 
 	fn advance_and_check_multiple(&mut self, label: &str, subj: &[&[u8]]) -> Result<(), String> {
@@ -110,7 +110,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			}
 		}
 
-		return Err(format!("Check failed on \"{}\"", label));
+		Err(format!("Check failed on \"{}\"", label))
 	}
 
 	fn pad(n: u64, pad: u64) -> u64 {
@@ -119,7 +119,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			return n;
 		}
 
-		return n + (pad - rem);
+		n + (pad - rem)
 	}
 
 	fn get_header(&mut self) -> Result<(), String> {
@@ -142,7 +142,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		self.advance("header/color_mode", 2);
 
 		self.end("header");
-		return Ok(());
+		Ok(())
 	}
 
 	fn get_color_mode(&mut self) -> Result<(), String> {
@@ -234,8 +234,8 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		Ok(())
 	}
 
-	fn get_layer(&mut self, prefix: &String) -> Result<(), String> {
-		let len = self.file_type.length() as u64;
+	fn get_layer(&mut self, prefix: &str) -> Result<(), String> {
+		let len = u64::from(self.file_type.length());
 		self.start(&prefix);
 
 		self.start(&format!("{}/rect", prefix));
@@ -273,7 +273,8 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		self.advance(&format!("{}/flags", prefix), 1);
 		self.advance(&format!("{}/filler", prefix), 1);
 
-		let extra_data_length = self.advance_and_read(&format!("{}/extra_data_length", prefix), 4)?;
+		let extra_data_length =
+			self.advance_and_read(&format!("{}/extra_data_length", prefix), 4)?;
 
 		let extra_data_end = self.pos + extra_data_length;
 
@@ -296,19 +297,19 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 					let mask_flags =
 						self.advance_and_read(&format!("{}/mask_data/flags", prefix), 1)?;
 
-					if mask_flags & 0b00010000 != 0 {
+					if mask_flags & 0b0001_0000 != 0 {
 						let params =
 							self.advance_and_read(&format!("{}/mask_data/parameters", prefix), 1)?;
-						if params & 0b10000000 != 0 {
+						if params & 0b1000_0000 != 0 {
 							self.advance(&format!("{}/mask_data/user_mask_density", prefix), 1);
 						}
-						if params & 0b01000000 != 0 {
+						if params & 0b0100_0000 != 0 {
 							self.advance(&format!("{}/mask_data/user_mask_feather", prefix), 2);
 						}
-						if params & 0b00100000 != 0 {
+						if params & 0b0010_0000 != 0 {
 							self.advance(&format!("{}/mask_data/vector_mask_density", prefix), 1);
 						}
-						if params & 0b00010000 != 0 {
+						if params & 0b0001_0000 != 0 {
 							self.advance(&format!("{}/mask_data/vector_mask_feather", prefix), 2);
 						}
 					}
@@ -350,11 +351,11 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		self.end(&format!("{}/extra_data", prefix));
 		self.end(prefix);
 
-		return Ok(());
+		Ok(())
 	}
 
 	fn get_layers_resources(&mut self) -> Result<(), String> {
-		let len = self.file_type.length() as u64;
+		let len = u64::from(self.file_type.length());
 		let layers_length = self.advance_and_read("layers_resources_length", len)?;
 		let layers_end = self.pos + layers_length;
 
@@ -406,7 +407,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 								Some(start) => {
 									let end = self.ends.get(
 										&format!("layers_resources/layers_info/layer_{}/channel_info/channel_{}:length", i, j)
-									).ok_or(
+									).ok_or_else(||
 										format!("layers_resources/layers_info/layer_{}/channel_info/channel_{}:length end wasn't found", i, j)
 									)?;
 									let len = *end - *start;
@@ -457,7 +458,8 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			}
 			self.end("layers_resources/layers_info");
 
-			let global_mask_len = self.advance_and_read("layers_resources/global_mask_length", 4)?;
+			let global_mask_len =
+				self.advance_and_read("layers_resources/global_mask_length", 4)?;
 			self.advance("layers_resources/global_mask", global_mask_len);
 
 			self.start("layers_resources/additional_layer_information");
@@ -507,17 +509,15 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 			let s = self
 				.starts
 				.get(key)
-				.expect(&format!("failed to get key: {}", key))
-				.clone();
+				.ok_or_else(|| format!("failed to get key: {}", key))?;
 			let e = self
 				.ends
 				.get(key)
-				.expect(&format!("failed to get key: {}", key))
-				.clone();
+				.ok_or_else(|| format!("failed to get key: {}", key))?;
 			if e < s {
 				return Err(format!("end {} is shorter that start {} at {}", e, s, key));
 			};
-			indexes.insert(key.clone(), s, e - s);
+			indexes.insert(key.clone(), *s, e - s);
 		}
 
 		self.starts.clear();
@@ -527,7 +527,7 @@ impl<'a, T: 'a + Read + Seek> PSDReader<'a, T> {
 		self.file
 			.seek(SeekFrom::Start(pos))
 			.map_err(|x| x.to_string())?;
-		return Ok(self.indexes.as_ref().unwrap());
+		Ok(self.indexes.as_ref().unwrap())
 	}
 }
 
@@ -573,8 +573,7 @@ mod psd_reader_tests {
 				let path = entry.as_ref().unwrap().path();
 				let ext = path.extension();
 				return ext.is_some() && (ext.unwrap() == "psd" || ext.unwrap() == "psb");
-			})
-			.map(|x| x.unwrap().path());
+			}).map(|x| x.unwrap().path());
 		for file in files {
 			let mut file = File::open(&file).unwrap();
 			let mut reader = PSDReader::new(&mut file);

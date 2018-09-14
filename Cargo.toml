@@ -1,11 +1,11 @@
 [package]
 name = "psd_lib"
-version = "0.8.3"
+version = "0.9.0"
 authors = ["Vyrtsev Mikhail <reeywhaar@gmail.com>"]
 
 [dependencies]
 sha2 = "0.7.1"
-bin_diff = { git = "https://github.com/Reeywhaar/bin_diff", tag="0.8.3" }
+bin_diff = { git = "https://github.com/Reeywhaar/bin_diff", tag="0.8.4" }
 threadpool = "1.7.1"
 num_cpus = "1.0"
 
@@ -28,6 +28,10 @@ path = "src/bin_lines.rs"
 [[bin]]
 name = "psd_decompose"
 path = "src/bin_decompose.rs"
+
+[[bin]]
+name = "psd_merge"
+path = "src/bin_merge.rs"
 
 [profile.release]
 lto = true

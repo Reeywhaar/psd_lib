@@ -16,7 +16,7 @@ pub fn measure_diff_size<T: WithIndexes, U: WithIndexes>(
 	mut original: &mut T,
 	mut edited: &mut U,
 ) -> IOResult<u64> {
-	return bc_measure(&mut original, &mut edited).map(|x| x + (PSDDIFF_HEADER.len() as u64));
+	bc_measure(&mut original, &mut edited).map(|x| x + (PSDDIFF_HEADER.len() as u64))
 }
 
 /// creates diff out of two psd files
@@ -28,9 +28,9 @@ pub fn create_diff<T: WithIndexes, U: WithIndexes, W: Write>(
 	let mut stdo = BufWriter::with_capacity(1024 * 64, output);
 
 	stdo.write(&PSDDIFF_HEADER)
-		.or(Err(Error::new(ErrorKind::Other, "Cannot write header")))?;
+		.or_else(|_| Err(Error::new(ErrorKind::Other, "Cannot write header")))?;
 
-	return bc_diff(&mut original, &mut edited, &mut stdo);
+	bc_diff(&mut original, &mut edited, &mut stdo)
 }
 
 /// Combines two diffs
@@ -41,23 +41,23 @@ pub fn combine_diffs<T: Read + Seek, U: Read + Seek, W: Write>(
 ) -> IOResult<()> {
 	let mut buf = vec![0; 10];
 	{
-		(&mut a).take(10).by_ref().read(&mut buf)?;
-		if &buf[0..10] != &PSDDIFF_HEADER {
+		(&mut a).take(10).by_ref().read_exact(&mut buf)?;
+		if buf[0..10] != PSDDIFF_HEADER {
 			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
 		};
 	}
 	{
-		(&mut b).take(10).by_ref().read(&mut buf)?;
-		if &buf[0..10] != &PSDDIFF_HEADER {
+		(&mut b).take(10).by_ref().read_exact(&mut buf)?;
+		if buf[0..10] != PSDDIFF_HEADER {
 			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
 		};
 	}
 
 	output
 		.write(&PSDDIFF_HEADER)
-		.or(Err(Error::new(ErrorKind::Other, "Cannot write header")))?;
+		.or_else(|_| Err(Error::new(ErrorKind::Other, "Cannot write header")))?;
 
-	return bcombine_diffs(&mut a, &mut b, &mut output);
+	bcombine_diffs(&mut a, &mut b, &mut output)
 }
 
 /// Combines multiple diffs
@@ -68,17 +68,17 @@ pub fn combine_diffs_vec<T: Read + Seek, W: Write>(
 	let mut buf = vec![0; 10];
 
 	for item in diffs.iter_mut() {
-		item.take(10).by_ref().read(&mut buf)?;
-		if &buf[0..10] != &PSDDIFF_HEADER {
+		item.take(10).by_ref().read_exact(&mut buf)?;
+		if buf[0..10] != PSDDIFF_HEADER {
 			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
 		};
 	}
 
 	output
 		.write(&PSDDIFF_HEADER)
-		.or(Err(Error::new(ErrorKind::Other, "Cannot write header")))?;
+		.or_else(|_| Err(Error::new(ErrorKind::Other, "Cannot write header")))?;
 
-	return bcombine_diffs_vec(diffs, &mut output);
+	bcombine_diffs_vec(diffs, &mut output)
 }
 
 #[cfg(test)]
@@ -103,8 +103,7 @@ mod combine_diff_tests {
 					let path = format!("./test_data/{}", x);
 					let file = File::open(path).unwrap();
 					PSDFile::new(file)
-				})
-				.collect();
+				}).collect();
 
 			let hash = {
 				let index = files.len() - 1;
@@ -154,13 +153,13 @@ pub fn apply_diff<T: Read, U: Read, W: Write>(
 ) -> IOResult<()> {
 	let mut buf = vec![0; 10];
 	{
-		(&mut diff).take(10).by_ref().read(&mut buf)?;
-		if &buf[0..10] != &PSDDIFF_HEADER {
+		(&mut diff).take(10).by_ref().read_exact(&mut buf)?;
+		if buf[0..10] != PSDDIFF_HEADER {
 			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
 		};
 	}
 
-	return ba_diff(&mut file, &mut diff, &mut output);
+	ba_diff(&mut file, &mut diff, &mut output)
 }
 
 #[cfg(test)]
@@ -404,17 +403,17 @@ pub fn apply_diffs_vec<T: Read, U: Read + Seek, W: Write>(
 	let mut buf = vec![0; 10];
 
 	for item in diffs.iter_mut() {
-		item.take(10).by_ref().read(&mut buf)?;
-		if &buf[0..10] != &PSDDIFF_HEADER {
+		item.take(10).by_ref().read_exact(&mut buf)?;
+		if buf[0..10] != PSDDIFF_HEADER {
 			return Err(Error::new(ErrorKind::Other, "Header mismatch"));
 		};
 	}
 
 	let mut diffblocks = bcombine_diffs_vec_to_diffblocks(&mut diffs)?;
-	for block in diffblocks.iter_mut() {
+	for block in &mut diffblocks {
 		apply_diffblock(&mut file, block, &mut output)?;
 	}
-	return Ok(());
+	Ok(())
 }
 
 #[cfg(test)]
@@ -439,8 +438,7 @@ mod apply_diffs_vec_tests {
 					let path = format!("./test_data/{}", x);
 					let file = File::open(path).unwrap();
 					PSDFile::new(file)
-				})
-				.collect();
+				}).collect();
 
 			let hash = {
 				let index = files.len() - 1;

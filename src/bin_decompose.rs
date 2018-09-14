@@ -56,10 +56,10 @@ use threadpool::ThreadPool;
 const EMPTY_HASH: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 fn bytes_to_human_readable(size: u64) -> String {
-	let mask = 0b1111111111;
-	let gb = (size >> 10 * 3) & mask;
-	let mb = (size >> 10 * 2) & mask;
-	let kb = (size >> 10 * 1) & mask;
+	let mask = 0b11_1111_1111;
+	let gb = (size >> (10 * 3)) & mask;
+	let mb = (size >> (10 * 2)) & mask;
+	let kb = (size >> 10) & mask;
 	let b = size & mask;
 	return format!("{}GB {}MB {}KB {}B", gb, mb, kb, b);
 }
@@ -68,12 +68,10 @@ fn get_objects<'a, T: 'a + Read + Seek>(
 	input: T,
 ) -> Result<LinesWithHashIterator<PSDFile<T>>, String> {
 	let file = PSDFile::new(input);
-	return LinesWithHashIterator::new(file);
+	LinesWithHashIterator::new(file)
 }
 
-fn get_objects_parallel(
-	paths: &Vec<PathBuf>,
-) -> Result<Vec<Vec<(String, u64, u64, String)>>, String> {
+fn get_objects_parallel(paths: &[PathBuf]) -> Result<Vec<Vec<(String, u64, u64, String)>>, String> {
 	let mut out = vec![vec![]; paths.len()];
 	let pool = ThreadPool::new(num_cpus::get());
 	let (tx, rx) = channel();
@@ -81,13 +79,14 @@ fn get_objects_parallel(
 		let tx = tx.clone();
 		let path = path.clone();
 		pool.execute(move || {
-			let mut input = match File::open(&path).or(Err(format!("Cannot open {:?}", path))) {
-				Ok(i) => i,
-				Err(e) => {
-					tx.send(Err(e)).unwrap();
-					return;
-				}
-			};
+			let mut input =
+				match File::open(&path).or_else(|_| Err(format!("Cannot open {:?}", path))) {
+					Ok(i) => i,
+					Err(e) => {
+						tx.send(Err(e)).unwrap();
+						return;
+					}
+				};
 			let obj = match get_objects(&mut input)
 				.map_err(|e| format!("path: {}\nerror: {}", path.display(), e))
 			{
@@ -112,11 +111,11 @@ fn get_objects_parallel(
 	Ok(out)
 }
 
-fn decompose_files(paths: &Vec<PathBuf>) -> Result<(), String> {
+fn decompose_files(paths: &[PathBuf]) -> Result<(), String> {
 	let objects_store = get_objects_parallel(&paths)?;
 
 	for (index, path) in paths.iter().enumerate() {
-		let mut input = File::open(&path).or(Err(format!("Cannot open {:?}", path)))?;
+		let mut input = File::open(&path).or_else(|_| Err(format!("Cannot open {:?}", path)))?;
 		let objects = &objects_store[index];
 
 		eprintln!("processing {:?}", path);
@@ -137,7 +136,7 @@ fn decompose_files(paths: &Vec<PathBuf>) -> Result<(), String> {
 		}
 
 		let indexfile = File::create(&indexfileloc)
-			.or(Err(format!("Cannot create index file: {:?}", indexfileloc)))?;
+			.or_else(|_| Err(format!("Cannot create index file: {:?}", indexfileloc)))?;
 		let mut indexfile = BufWriter::with_capacity(1024, indexfile);
 
 		for (_label, start, size, hash) in objects.iter() {
@@ -152,35 +151,29 @@ fn decompose_files(paths: &Vec<PathBuf>) -> Result<(), String> {
 
 			if hashloc.exists() {
 				indexfile
-					.write(format!("{}\n", hash).as_bytes())
-					.or(Err(format!(
-						"Cannot write to index file: {:?}",
-						indexfileloc
-					)))?;
+					.write_all(format!("{}\n", hash).as_bytes())
+					.or_else(|_| Err(format!("Cannot write to index file: {:?}", indexfileloc)))?;
 				continue;
 			}
 
 			if !hashdir.exists() {
 				create_dir_all(&hashdir)
-					.or(Err(format!("Cannot create hash directory: {:?}", hashdir)))?;
+					.or_else(|_| Err(format!("Cannot create hash directory: {:?}", hashdir)))?;
 			}
 
 			input
 				.seek(SeekFrom::Start(*start))
-				.or(Err(format!("Cannot seek {:?}", path)))?;
+				.or_else(|_| Err(format!("Cannot seek {:?}", path)))?;
 			let mut chunk = Read::by_ref(&mut input).take(*size);
 			let mut hashfile = File::create(&hashloc)
-				.or(Err(format!("Cannot create hash object: {:?}", hashloc)))?;
+				.or_else(|_| Err(format!("Cannot create hash object: {:?}", hashloc)))?;
 			eprintln!("writing {:?}", hashloc);
 			copy(&mut chunk, &mut hashfile)
-				.or(Err(format!("Cannot write hash object: {:?}", hashloc)))?;
+				.or_else(|_| Err(format!("Cannot write hash object: {:?}", hashloc)))?;
 
 			indexfile
-				.write(format!("{}\n", hash).as_bytes())
-				.or(Err(format!(
-					"Cannot write to index file: {:?}",
-					indexfileloc
-				)))?;
+				.write_all(format!("{}\n", hash).as_bytes())
+				.or_else(|_| Err(format!("Cannot write to index file: {:?}", indexfileloc)))?;
 		}
 
 		indexfile.flush().or(Err("Cannot flush index file"))?;
@@ -189,13 +182,13 @@ fn decompose_files(paths: &Vec<PathBuf>) -> Result<(), String> {
 	Ok(())
 }
 
-fn restore_files(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<(), String> {
+fn restore_files(paths: &[PathBuf], prefix: &str, postfix: &str) -> Result<(), String> {
 	for path in paths {
 		if path.extension().unwrap() != "decomposed" {
 			return Err("File extension should be \".decomposed\" or program fails".to_string());
 		}
 
-		let file = File::open(&path).or(Err(format!("Cannot open path: {:?}", path)))?;
+		let file = File::open(&path).or_else(|_| Err(format!("Cannot open path: {:?}", path)))?;
 		let file = BufReader::with_capacity(1024, file);
 
 		let mut restored_loc = path.to_path_buf();
@@ -203,13 +196,19 @@ fn restore_files(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<()
 		if prefix != "" || postfix != "" {
 			let stem = restored_loc
 				.file_stem()
-				.map(|x| x.to_os_string().into_string().unwrap_or("".to_string()))
-				.unwrap_or("".to_string());
+				.map(|x| {
+					x.to_os_string()
+						.into_string()
+						.unwrap_or_else(|_| "".to_string())
+				}).unwrap_or_else(|| "".to_string());
 			let ext = restored_loc
 				.extension()
-				.map(|x| x.to_os_string().into_string().unwrap_or("".to_string()))
-				.map(|x| format!(".{}", x))
-				.unwrap_or("".to_string());
+				.map(|x| {
+					x.to_os_string()
+						.into_string()
+						.unwrap_or_else(|_| "".to_string())
+				}).map(|x| format!(".{}", x))
+				.unwrap_or_else(|| "".to_string());
 			restored_loc.set_file_name(format!("{}{}{}{}", prefix, stem, postfix, ext));
 		}
 
@@ -219,10 +218,8 @@ fn restore_files(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<()
 
 		let mut output_file = BufWriter::with_capacity(
 			1024 * 64,
-			File::create(&restored_loc).or(Err(format!(
-				"Cannot create file to restore: {:?}",
-				restored_loc
-			)))?,
+			File::create(&restored_loc)
+				.or_else(|_| Err(format!("Cannot create file to restore: {:?}", restored_loc)))?,
 		);
 
 		for hash in file.lines() {
@@ -241,15 +238,14 @@ fn restore_files(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<()
 				return Err(format!("hash {:?} doesn't exists", hashloc));
 			}
 
-			let mut hashfile =
-				File::open(&hashloc).or(Err(format!("Cannot open hash {:?}", &hashloc)))?;
+			let mut hashfile = File::open(&hashloc)
+				.or_else(|_| Err(format!("Cannot open hash {:?}", &hashloc)))?;
 			copy(&mut hashfile, &mut output_file).map_err(|e| e.to_string())?;
 		}
 
-		output_file.flush().or(Err(format!(
-			"Cannot flush to output file: {:?}",
-			restored_loc
-		)))?;
+		output_file
+			.flush()
+			.or_else(|_| Err(format!("Cannot flush to output file: {:?}", restored_loc)))?;
 	}
 
 	Ok(())
@@ -257,12 +253,12 @@ fn restore_files(paths: &Vec<PathBuf>, prefix: &str, postfix: &str) -> Result<()
 
 fn get_unique_hashes(path: &PathBuf) -> Result<Vec<(String, u64)>, String> {
 	if path.extension().is_some() && path.extension().unwrap() == "decomposed" {
-		let file = File::open(&path).or(Err(format!("Cannot open path: {:?}", path)))?;
+		let file = File::open(&path).or_else(|_| Err(format!("Cannot open path: {:?}", path)))?;
 		let file = BufReader::with_capacity(1024, file);
 
 		let objdir = path
 			.parent()
-			.ok_or("Parent directory not found".to_string())?;
+			.ok_or_else(|| "Parent directory not found".to_string())?;
 		let mut objdir = PathBuf::from(objdir);
 		objdir.push("decomposed_objects");
 
@@ -292,18 +288,18 @@ fn get_unique_hashes(path: &PathBuf) -> Result<Vec<(String, u64)>, String> {
 		return Ok(output);
 	};
 
-	let mut input = File::open(&path).or(Err(format!("Cannot open {:?}", path)))?;
+	let mut input = File::open(&path).or_else(|_| Err(format!("Cannot open {:?}", path)))?;
 	let hashes = {
 		let obj = get_objects(&mut input)?;
 		obj.map(|x| (x.3, x.2)).fold(vec![], |mut c, x| {
 			if !c.contains(&x) {
 				c.push(x);
 			};
-			return c;
+			c
 		})
 	};
 
-	return Ok(hashes);
+	Ok(hashes)
 }
 
 #[derive(Clone)]
@@ -312,20 +308,20 @@ enum CalcMode {
 	Decomposed,
 }
 
-fn calc_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
+fn calc_size(paths: &[PathBuf], as_bytes: bool) -> Result<(), String> {
 	let write_lock = Arc::new(Mutex::new(()));
 	let total_hashes: Arc<Mutex<Vec<(String, u64)>>> = Arc::new(Mutex::new(vec![]));
 	let pool = ThreadPool::new(num_cpus::get());
 	let (tx, rx) = channel();
 
 	let mode = {
-		let decomposed_mode = paths.into_iter().all(|x| {
-			return x.extension().is_some() && x.extension().unwrap() == "decomposed";
-		});
+		let decomposed_mode = paths
+			.into_iter()
+			.all(|x| x.extension().is_some() && x.extension().unwrap() == "decomposed");
 
-		let composed_mode = paths.into_iter().all(|x| {
-			return x.extension().is_some() && x.extension().unwrap() != "decomposed";
-		});
+		let composed_mode = paths
+			.into_iter()
+			.all(|x| x.extension().is_some() && x.extension().unwrap() != "decomposed");
 
 		match (decomposed_mode, composed_mode) {
 			(true, false) => CalcMode::Decomposed,
@@ -389,8 +385,7 @@ fn calc_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
 			.map(|x| {
 				let meta = metadata(x).unwrap();
 				meta.len()
-			})
-			.fold(0u64, |c, x| c + x);
+			}).sum();
 
 		let size = total_hashes
 			.lock()
@@ -426,7 +421,7 @@ fn calc_size(paths: &Vec<PathBuf>, as_bytes: bool) -> Result<(), String> {
 }
 
 fn get_shasum(path: &PathBuf) -> Result<String, String> {
-	let file = File::open(&path).or(Err(format!("Cannot open path: {:?}", path)))?;
+	let file = File::open(&path).or_else(|_| Err(format!("Cannot open path: {:?}", path)))?;
 	let mut file = BufReader::with_capacity(1024, file);
 
 	let buf = &mut [0u8; 1024 * 64];
@@ -453,13 +448,13 @@ fn get_shasum(path: &PathBuf) -> Result<String, String> {
 				return Err(format!("hash {:?} doesn't exists", hashloc));
 			}
 
-			let mut hashfile =
-				File::open(&hashloc).or(Err(format!("Cannot open hash {:?}", &hashloc)))?;
+			let mut hashfile = File::open(&hashloc)
+				.or_else(|_| Err(format!("Cannot open hash {:?}", &hashloc)))?;
 
 			loop {
 				let read = hashfile
 					.read(buf)
-					.or(Err(format!("Cannot read decomposed chunk {:?}", &hashloc)))?;
+					.or_else(|_| Err(format!("Cannot read decomposed chunk {:?}", &hashloc)))?;
 				if read == 0 {
 					break;
 				};
@@ -470,7 +465,7 @@ fn get_shasum(path: &PathBuf) -> Result<String, String> {
 		loop {
 			let read = file
 				.read(buf)
-				.or(Err(format!("Cannot read file {:?}", &path)))?;
+				.or_else(|_| Err(format!("Cannot read file {:?}", &path)))?;
 			if read == 0 {
 				break;
 			};
@@ -478,15 +473,15 @@ fn get_shasum(path: &PathBuf) -> Result<String, String> {
 		}
 	}
 
-	return Ok(hasher
+	Ok(hasher
 		.result()
 		.iter()
 		.map(|b| format!("{:02x}", b))
 		.collect::<Vec<String>>()
-		.join(""));
+		.join(""))
 }
 
-fn output_shasum(paths: &Vec<PathBuf>) -> Result<(), String> {
+fn output_shasum(paths: &[PathBuf]) -> Result<(), String> {
 	let paths_len = paths.len();
 	let hashes = Arc::new(Mutex::new(vec!["".to_string(); paths.len()]));
 	let pool = ThreadPool::new(num_cpus::get());
@@ -515,7 +510,7 @@ fn output_shasum(paths: &Vec<PathBuf>) -> Result<(), String> {
 		i += 1;
 	}
 
-	return Ok(());
+	Ok(())
 }
 
 fn cleanup() -> Result<(), String> {
@@ -532,51 +527,47 @@ fn cleanup() -> Result<(), String> {
 	let indexes = read_dir(&objdir)
 		.or(Err("Cannot read decomposed_objects directory"))?
 		.scan((), |_, x| x.ok())
-		.flat_map(|sub_dir| {
-			return read_dir(sub_dir.path()).unwrap();
-		})
+		.flat_map(|sub_dir| read_dir(sub_dir.path()).unwrap())
 		.scan((), |_, x| x.ok())
 		.map(|x| x.path());
 
 	let rindexes = read_dir(".")
-		.or(Err("Cannot read directory".to_string()))?
+		.or_else(|_| Err("Cannot read directory".to_string()))?
 		.scan((), |_, x| x.ok())
 		.filter_map(|file| {
 			let path = file.path();
-			return path.extension().and_then(|ext| {
+			path.extension().and_then(|ext| {
 				if ext == "decomposed" {
-					return Some(path.clone());
+					Some(path.clone())
 				} else {
-					return None;
+					None
 				}
-			});
-		})
-		.flat_map(|file| BufReader::new(File::open(file).unwrap()).lines())
+			})
+		}).flat_map(|file| BufReader::new(File::open(file).unwrap()).lines())
 		.scan((), |_, x| x.ok())
 		.map(|x| {
 			let mut o = objdir.clone();
 			o.push(&x[..2]);
 			o.push(&x);
 			o
-		})
-		.fold(vec![], |mut c, hash| {
+		}).fold(vec![], |mut c, hash| {
 			if !c.contains(&hash) {
 				c.push(hash);
 			};
-			return c;
+			c
 		});
 
 	for index in indexes {
 		if !rindexes.contains(&index) {
 			eprintln!("removing {:?}", index);
-			remove_file(&index).or(Err(format!("Cannot remove {:?}", index)))?;
+			remove_file(&index).or_else(|_| Err(format!("Cannot remove {:?}", index)))?;
 		};
 	}
 
 	Ok(())
 }
 
-fn remove(paths: &Vec<PathBuf>) -> Result<(), String> {
+fn remove(paths: &[PathBuf]) -> Result<(), String> {
 	for path in paths {
 		if !(path.extension().is_some() && path.extension().unwrap() == "decomposed") {
 			return Err(format!("{:?} is not decomposed index", path));
@@ -585,7 +576,7 @@ fn remove(paths: &Vec<PathBuf>) -> Result<(), String> {
 			return Err(format!("{:?} doesn't exists", path));
 		};
 
-		remove_file(&path).or(Err(format!("Cannot remove {:?}", path)))?;
+		remove_file(&path).or_else(|_| Err(format!("Cannot remove {:?}", path)))?;
 	}
 
 	cleanup()?;
@@ -642,12 +633,12 @@ $: psd_decompose --cleanup
 			"--restore" => {
 				action
 					.set(Action::Restore)
-					.or(Err("Cannot set action more than one time".to_string()))?;
+					.or_else(|_| Err("Cannot set action more than one time".to_string()))?;
 			}
 			"--size" => {
 				action
 					.set(Action::Size)
-					.or(Err("Cannot set action more than one time".to_string()))?;
+					.or_else(|_| Err("Cannot set action more than one time".to_string()))?;
 			}
 			x if x == "--as-bytes" && *action == Some(Action::Size) => {
 				as_bytes = true;
@@ -655,17 +646,17 @@ $: psd_decompose --cleanup
 			"--sha" => {
 				action
 					.set(Action::CheckSum)
-					.or(Err("Cannot set action more than one time".to_string()))?;
+					.or_else(|_| Err("Cannot set action more than one time".to_string()))?;
 			}
 			"--remove" => {
 				action
 					.set(Action::Remove)
-					.or(Err("Cannot set action more than one time".to_string()))?;
+					.or_else(|_| Err("Cannot set action more than one time".to_string()))?;
 			}
 			"--cleanup" => {
 				action
 					.set(Action::Cleanup)
-					.or(Err("Cannot set action more than one time".to_string()))?;
+					.or_else(|_| Err("Cannot set action more than one time".to_string()))?;
 			}
 			x if x.len() >= 9 && &x[0..9] == "--prefix=" && *action == Some(Action::Restore) => {
 				prefix = x[9..].to_string();

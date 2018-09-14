@@ -14,7 +14,6 @@ extern crate bin_diff;
 extern crate psd_lib;
 extern crate sha2;
 
-use bin_diff::indexes::WithIndexes;
 use psd_lib::psd_file::PSDFile;
 use sha2::{Digest, Sha256};
 use std::cmp::max;
@@ -35,12 +34,12 @@ fn compute_hash<T: Read>(input: &mut T) -> String {
 		hasher.input(slice);
 	}
 
-	return hasher
+	hasher
 		.result()
 		.iter()
 		.map(|b| format!("{:02x}", b))
 		.collect::<Vec<String>>()
-		.join("");
+		.join("")
 }
 
 fn main() {
@@ -80,25 +79,26 @@ fn main() {
 	let mut output = output.lock();
 	let mut output = BufWriter::with_capacity(1024 * 64, &mut output);
 
-	let indexes = file.get_indexes().unwrap_or_else(|e| {
-		eprintln!("{}", e);
-		exit(1);
-	});
+	let indexes = file
+		.get_indexes()
+		.unwrap_or_else(|e| {
+			eprintln!("{}", e);
+			exit(1);
+		}).clone();
 
 	for (item, start, size) in indexes {
-		let indent: usize = match flat {
-			true => 0,
-			false => {
-				let indent = item.matches("/").count();
-				let indentb = item.matches(":").count();
-				indent + indentb
-			}
+		let indent: usize = if flat {
+			0
+		} else {
+			let indent = item.matches('/').count();
+			let indentb = item.matches(':').count();
+			indent + indentb
 		};
 		let mut s = item.clone();
 		if !fullpath {
 			let index = max(
-				s.clone().rfind("/").unwrap_or(0),
-				s.clone().rfind(":").unwrap_or(0),
+				s.clone().rfind('/').unwrap_or(0),
+				s.clone().rfind(':').unwrap_or(0),
 			);
 			if index != 0 {
 				s = s.split_at(index + 1).1.to_string();
@@ -113,10 +113,11 @@ fn main() {
 			let max_size = 1024 * 1024 * 100;
 			if size != 0 && size < max_size {
 				let hash = {
-					&file_h.seek(SeekFrom::Start(start.clone()));
-					let mut file_p = (&file_h).take(size.clone());
-					let hash = compute_hash(&mut file_p);
-					hash
+					file_h
+						.seek(SeekFrom::Start(start))
+						.unwrap_or_else(|_| panic!("Can't seek file"));
+					let mut file_p = (&file_h).take(size);
+					compute_hash(&mut file_p)
 				};
 				out = format!("{}   {}", hash, out);
 			} else if size > max_size {

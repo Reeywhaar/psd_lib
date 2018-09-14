@@ -1,8 +1,12 @@
 //! Contains `PSDFile` struct
 
+use bin_diff::functions::{u32_to_u8_be_vec, u64_to_u8_be_vec};
 use bin_diff::indexes::{Indexes, WithIndexes};
 use psd_reader::PSDReader;
-use std::io::{Read, Result as IOResult, Seek, SeekFrom};
+use std::convert::From;
+use std::fs::File;
+use std::io::{copy, Read, Result as IOResult, Seek, SeekFrom, Write};
+use std::path::Path;
 
 const LINES: [&str; 15] = [
 	"header",
@@ -22,19 +26,32 @@ const LINES: [&str; 15] = [
 	"image_data",
 ];
 
+#[derive(Clone, Copy)]
+pub enum PSDFileType {
+	PSD,
+	PSB,
+}
+
 /// PSDFile implements `WithIndexes` trait from `bin_diff` package
 pub struct PSDFile<T: Read + Seek> {
 	file: T,
+	indexes: Option<Indexes>,
 }
 
 impl<T: Read + Seek> PSDFile<T> {
 	pub fn new(file: T) -> Self {
-		return Self { file: file };
+		Self {
+			file,
+			indexes: None,
+		}
 	}
 
-	fn get_indexes(&mut self) -> Result<Indexes, String> {
-		let mut reader = PSDReader::new(&mut self.file);
-		return reader.get_indexes().map(|x| x.clone());
+	pub fn get_indexes(&mut self) -> Result<&Indexes, String> {
+		if self.indexes.is_none() {
+			let mut reader = PSDReader::new(&mut self.file);
+			self.indexes = Some(reader.get_indexes()?.clone());
+		}
+		Ok(self.indexes.as_ref().unwrap())
 	}
 
 	pub fn get_lines(&mut self) -> Result<Indexes, String> {
@@ -44,13 +61,13 @@ impl<T: Read + Seek> PSDFile<T> {
 		let findline = |line: String, out: &mut Indexes| -> Result<(), String> {
 			let val = indexes
 				.get(&line)
-				.ok_or(format!("line \"{}\" wasn't found", line))?;
+				.ok_or_else(|| format!("line \"{}\" wasn't found", line))?;
 			out.insert(line, val.0, val.1);
 
 			Ok(())
 		};
 
-		for line in LINES.iter() {
+		for line in &LINES {
 			let line = line.to_string();
 			if line == "image_resources/image_resource_{n}" {
 				let mut i = 0;
@@ -94,24 +111,99 @@ impl<T: Read + Seek> PSDFile<T> {
 			findline(line, &mut out)?;
 		}
 
-		return Ok(out);
+		Ok(out)
+	}
+
+	/// writes composite (merged) psd file
+	pub fn write_composite<W: Write>(&mut self, output: &mut W) -> Result<(), String> {
+		let indexes = self.get_indexes()?.clone();
+		let psd_type = {
+			self.seek(SeekFrom::Start(4)).map_err(|x| x.to_string())?;
+			let mut buf = [0; 2];
+			self.read_exact(&mut buf).map_err(|x| x.to_string())?;
+			match buf {
+				[0, 1] => PSDFileType::PSD,
+				[0, 2] => PSDFileType::PSB,
+				_ => {
+					return Err("Unknown PSD type".to_string());
+				}
+			}
+		};
+		let write_chunk = |label: &str, s: &mut PSDFile<T>, output: &mut W| -> Result<(), String> {
+			let chunk = indexes
+				.get(label)
+				.ok_or_else(|| "cannot get label".to_string())?;
+			s.seek(SeekFrom::Start(chunk.0))
+				.map_err(|x| x.to_string())?;
+			let mut taken = Read::by_ref(s).take(chunk.1);
+			copy(&mut taken, output).map_err(|x| x.to_string())?;
+			Ok(())
+		};
+		let layers_length = vec![
+			"layers_resources/layers_info_length",
+			"layers_resources/global_mask_length",
+			"layers_resources/global_mask",
+			"layers_resources/additional_layer_information",
+		].iter()
+		.map(|x| indexes.get(x).unwrap().1)
+		.sum();
+
+		write_chunk("header", self, output)?;
+		write_chunk("color_mode_section_length", self, output)?;
+		write_chunk("color_mode_section", self, output)?;
+		output.write(&[0, 0, 0, 0]).map_err(|x| x.to_string())?; // image_resources_length
+		match psd_type {
+			PSDFileType::PSD => {
+				output
+					.write(&u32_to_u8_be_vec(layers_length as u32))
+					.map_err(|x| x.to_string())?; // layers_resources_length
+				output.write(&[0, 0, 0, 0]).map_err(|x| x.to_string())?; // layers_resources/layers_info_length
+			}
+			PSDFileType::PSB => {
+				output
+					.write(&u64_to_u8_be_vec(layers_length))
+					.map_err(|x| x.to_string())?; // layers_resources_length
+				output
+					.write(&[0, 0, 0, 0, 0, 0, 0, 0])
+					.map_err(|x| x.to_string())?; // layers_resources/layers_info_length
+			}
+		};
+		write_chunk("layers_resources/global_mask_length", self, output)?;
+		write_chunk("layers_resources/global_mask", self, output)?;
+		write_chunk(
+			"layers_resources/additional_layer_information",
+			self,
+			output,
+		)?;
+		write_chunk("image_data", self, output)?;
+		Ok(())
+	}
+}
+
+impl<T: AsRef<Path>> From<T> for PSDFile<File> {
+	fn from(path: T) -> Self {
+		let file = File::open(path).unwrap();
+		Self {
+			file,
+			indexes: None,
+		}
 	}
 }
 
 impl<T: Read + Seek> Read for PSDFile<T> {
 	fn read(&mut self, mut buffer: &mut [u8]) -> IOResult<usize> {
-		return self.file.read(&mut buffer);
+		self.file.read(&mut buffer)
 	}
 }
 
 impl<T: Read + Seek> Seek for PSDFile<T> {
 	fn seek(&mut self, from: SeekFrom) -> IOResult<u64> {
-		return self.file.seek(from);
+		self.file.seek(from)
 	}
 }
 
 impl<T: Read + Seek> WithIndexes for PSDFile<T> {
 	fn get_indexes(&mut self) -> Result<Indexes, String> {
-		return self.get_lines();
+		self.get_lines()
 	}
 }

@@ -64,11 +64,11 @@ fn main() {
 	{
 		let mut header = "".to_string();
 		for path in &paths {
-			let path = format!("{}", path);
+			let path = path.to_string();
 			header = format!("{} {}|", header, pad_right(&path, padding_length));
 		}
 		header = format!("{}\n", header);
-		stdout.write(header.as_bytes()).unwrap();
+		stdout.write_all(header.as_bytes()).unwrap();
 	}
 
 	loop {
@@ -86,10 +86,8 @@ fn main() {
 			let (label, start, size, hash) = item.clone().unwrap();
 
 			let mut label = label.clone();
-			if truncate {
-				if label.len() > 30 {
-					label = format!("{}...{}", &label[0..10], &label[(label.len() - 17)..]);
-				}
+			if truncate && label.len() > 30 {
+				label = format!("{}...{}", &label[0..10], &label[(label.len() - 17)..]);
 			};
 
 			let mut hash = hash.clone();
@@ -100,7 +98,7 @@ fn main() {
 		}
 
 		line = format!("{}\n", line);
-		stdout.write(line.as_bytes()).unwrap();
+		stdout.write_all(line.as_bytes()).unwrap();
 	}
 
 	let res = stdout.flush();
